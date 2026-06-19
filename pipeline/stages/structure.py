@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from pipeline.config import get_config
+from pipeline.db import record_stage_report
 from pipeline.util import component_dir, ensure_analysis_workspace, run_command, write_json
 
 
@@ -78,6 +79,20 @@ def run(run: dict[str, Any]) -> dict[str, Any]:
     }
     report_path = snapshot.parent / "structure-report.json"
     write_json(report_path, report)
+    record_stage_report({
+        "run_id": run["run_id"],
+        "stage": "structure",
+        "source_id": run["source_id"],
+        "commit_sha": run["commit_sha"],
+        "status": "passed" if report["passed"] else "failed",
+        "passed": report["passed"],
+        "summary": {"tool": report["tool"]},
+        "metrics": report,
+        "warnings": [],
+        "errors": [] if report["passed"] else [{"stage": "structure", "returncodes": report["returncodes"]}],
+        "schema_version": 1,
+        "pipeline_version": "0.1.0",
+    })
     if not passed and section.get("required", True):
         raise RuntimeError(f"CodeGraphContext stage failed; see {report_path}")
     return report

@@ -24,18 +24,8 @@ def run(run: dict[str, Any]) -> dict[str, Any]:
 
     snapshot = Path(run["snapshot_path"])
     reports = {}
-    report_files = {
-        "integrity": "integrity-report.json",
-        "normalize": "normalization-report.json",
-        "lint": "lint-report.json",
-        "structure": "structure-report.json",
-        "semantic": "semantic-report.json",
-        "retrieval": "retrieval-report.json",
-        "audit": "audit-report.json",
-        "curate": "curate-report.json",
-    }
-    for name, filename in report_files.items():
-        path = snapshot.parent / filename
+    for name in ("integrity", "normalize", "lint", "syntax", "structure", "semantic", "retrieval", "audit"):
+        path = snapshot.parent / f"{name}-report.json"
         if path.exists():
             reports[name] = read_json(path)
 
@@ -65,7 +55,7 @@ status: verified-and-indexed
 - Integrity: {'passed' if reports.get('integrity', {}).get('passed') else 'failed'}
 - Normalize: {'passed' if reports.get('normalize', {}).get('passed') else 'failed'}
 - Lint: {'passed' if reports.get('lint', {}).get('passed') else 'failed'}
-- Compatibility curate alias: {'passed' if reports.get('curate', {}).get('passed') else 'available'}
+- Syntax: {'passed' if reports.get('syntax', {}).get('passed') else 'failed'}
 - CodeGraphContext: {'passed' if reports.get('structure', {}).get('passed') else 'failed'}
 - Codebase-Memory: {'passed' if reports.get('semantic', {}).get('passed') else 'failed'}
 - Full-text retrieval: {'passed' if reports.get('retrieval', {}).get('passed') else 'failed'}
@@ -73,11 +63,8 @@ status: verified-and-indexed
 
 ## Counts
 
-- Files: {reports.get('curate', {}).get('file_count', 0)}
-- Text files: {reports.get('curate', {}).get('text_file_count', 0)}
-- Binary files preserved: {reports.get('curate', {}).get('binary_file_count', 0)}
-- Searchable units: {reports.get('curate', {}).get('unit_count', 0)}
-- Duplicate files: {reports.get('curate', {}).get('duplicate_file_count', 0)}
+- Files: {reports.get('normalize', {}).get('file_count', 0)}
+- Searchable units: {reports.get('syntax', {}).get('symbol_unit_count', 0) or reports.get('normalize', {}).get('unit_count', 0)}
 
 ## Retrieval
 

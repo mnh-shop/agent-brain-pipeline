@@ -58,7 +58,7 @@ def _fts_rows(query: str, run_ids: list[str], limit: int) -> list[dict[str, Any]
         SELECT u.unit_id,u.source_id,u.commit_sha,u.path,u.unit_type,u.heading,u.start_line,u.end_line,u.language,
                bm25(units_fts) AS score,
                snippet(units_fts, 4, '[', ']', ' … ', 28) AS excerpt
-        FROM units_fts JOIN units u USING(unit_id)
+        FROM units_fts JOIN units u ON u.run_id = units_fts.run_id AND u.unit_id = units_fts.unit_id
         WHERE units_fts MATCH ? AND u.run_id IN ({placeholders})
         ORDER BY score LIMIT ?
     """

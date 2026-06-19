@@ -6,11 +6,12 @@ import re
 from pathlib import Path
 from typing import Any
 
-import magic
 from charset_normalizer import from_bytes
 
 from pipeline.config import get_config
-from pipeline.db import replace_files, replace_units
+from pipeline.db import make_unit_id, record_stage_report, replace_files, replace_units
+from pipeline.schemas.ids import normalize_path
+from pipeline.urls import parse_repository_url
 from pipeline.util import ignored, read_json, run_command, sha256_file, sha256_text, write_json
 
 LANGUAGE_BY_SUFFIX = {
@@ -25,7 +26,13 @@ LANGUAGE_BY_SUFFIX = {
 
 def _decode(path: Path, max_bytes: int) -> tuple[str | None, str | None, bool, str]:
     raw = path.read_bytes()
-    mime = magic.from_buffer(raw[:8192], mime=True) or mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+    try:
+        import magic  # type: ignore
+
+        mime = magic.from_buffer(raw[:8192], mime=True)
+    except Exception:
+        mime = None
+    mime = mime or mimetypes.guess_type(path.name)[0] or "application/octet-stream"
     if b"\x00" in raw[:8192] or len(raw) > max_bytes:
         return None, None, True, mime
     match = from_bytes(raw).best()
@@ -39,22 +46,111 @@ def _decode(path: Path, max_bytes: int) -> tuple[str | None, str | None, bool, s
 
 def _markdown_units(text: str, path: str, metadata: dict[str, Any], max_chars: int) -> list[dict[str, Any]]:
     lines = text.splitlines()
-    sections: list[tuple[str, int, int]] = []
-    starts = [(i, line.lstrip("#").strip()) for i, line in enumerate(lines, start=1) if re.match(r"^#{1,6}\s+", line)]
-    if not starts:
-        starts = [(1, Path(path).name)]
-    for index, (start, heading) in enumerate(starts):
-        end = starts[index + 1][0] - 1 if index + 1 < len(starts) else len(lines)
-        sections.append((heading, start, end))
+    if not lines:
+        return []
 
-    units = []
-    for heading, start, end in sections:
-        content = "\n".join(lines[start - 1:end]).strip()
-        if not content:
+    headings: list[dict[str, Any]] = []
+    heading_stack: list[str] = []
+    for index, line in enumerate(lines, start=1):
+        match = re.match(r"^(#{1,6})\s+(.*)$", line)
+        if not match:
             continue
-        for offset in range(0, len(content), max_chars):
-            piece = content[offset:offset + max_chars]
-            units.append(_unit(path, "section", heading, start, end, "markdown", piece, metadata))
+        level = len(match.group(1))
+        title = match.group(2).strip()
+        while len(heading_stack) >= level:
+            heading_stack.pop()
+        heading_stack.append(title)
+        headings.append({"line": index, "level": level, "title": title, "path": " / ".join(heading_stack)})
+
+    if not headings:
+        headings = [{"line": 1, "level": 1, "title": Path(path).name, "path": Path(path).name}]
+
+    offsets: list[tuple[int, int]] = []
+    byte_cursor = 0
+    for line in lines:
+        raw = (line + "\n").encode("utf-8")
+        offsets.append((byte_cursor, byte_cursor + len(raw)))
+        byte_cursor += len(raw)
+
+    def _line_chunk(start_line: int, end_line: int, heading: str) -> dict[str, Any] | None:
+        content_lines = lines[start_line - 1:end_line]
+        content = "\n".join(content_lines)
+        if not content.strip():
+            return None
+        start_byte = offsets[start_line - 1][0]
+        end_byte = offsets[end_line - 1][1]
+        content_hash = sha256_text(content)
+        normalized = normalize_path(path)
+        unit = {
+            "unit_id": make_unit_id(
+                metadata["source_id"],
+                metadata["commit_sha"],
+                normalized,
+                "markdown_section",
+                start_line,
+                end_line,
+                content_hash,
+            ),
+            "source_id": metadata["source_id"],
+            "platform": metadata["platform"],
+            "repository_url": metadata["repository_url"],
+            "namespace": metadata["namespace"],
+            "repository_name": metadata["repository_name"],
+            "requested_ref": metadata.get("requested_ref"),
+            "resolved_branch": metadata.get("resolved_branch"),
+            "commit_sha": metadata["commit_sha"],
+            "path": path,
+            "normalized_path": normalized,
+            "unit_type": "markdown_section",
+            "heading": heading,
+            "language": "markdown",
+            "start_line": start_line,
+            "end_line": end_line,
+            "start_byte": start_byte,
+            "end_byte": end_byte,
+            "file_sha256": metadata["file_sha256"],
+            "content_sha256": content_hash,
+            "content": content,
+            "generator_name": "curate:markdown",
+            "generator_version": "1",
+            "schema_version": 1,
+            "pipeline_version": metadata["pipeline_version"],
+            "source_line_start": start_line,
+            "source_line_end": end_line,
+            "source_byte_start": start_byte,
+            "source_byte_end": end_byte,
+            "metadata": metadata,
+        }
+        expected = "\n".join(lines[start_line - 1:end_line])
+        if unit["content"] != expected:
+            raise RuntimeError(f"Markdown unit content mismatch for {path}:{start_line}-{end_line}")
+        return unit
+
+    units: list[dict[str, Any]] = []
+    for index, heading in enumerate(headings):
+        section_start = heading["line"]
+        next_start = headings[index + 1]["line"] - 1 if index + 1 < len(headings) else len(lines)
+        section_lines = list(range(section_start, next_start + 1))
+        if not section_lines:
+            continue
+        chunk_start = section_start
+        chunk_chars = 0
+        last_line = section_start - 1
+        for line_no in section_lines:
+            line_text = lines[line_no - 1]
+            line_chars = len(line_text) + 1
+            if chunk_chars and chunk_chars + line_chars > max_chars and last_line >= chunk_start:
+                unit = _line_chunk(chunk_start, last_line, heading["path"])
+                if unit:
+                    units.append(unit)
+                chunk_start = line_no
+                chunk_chars = 0
+            chunk_chars += line_chars
+            last_line = line_no
+        if last_line >= chunk_start:
+            unit = _line_chunk(chunk_start, last_line, heading["path"])
+            if unit:
+                units.append(unit)
     return units
 
 
@@ -64,7 +160,7 @@ def _code_units(text: str, path: str, metadata: dict[str, Any], language: str, l
     step = max(1, lines_per_chunk - overlap)
     for start_index in range(0, len(lines), step):
         end_index = min(len(lines), start_index + lines_per_chunk)
-        piece = "\n".join(lines[start_index:end_index]).strip()
+        piece = "\n".join(lines[start_index:end_index])
         if piece:
             units.append(_unit(path, "code_chunk", None, start_index + 1, end_index, language, piece, metadata))
         if end_index >= len(lines):
@@ -73,19 +169,38 @@ def _code_units(text: str, path: str, metadata: dict[str, Any], language: str, l
 
 
 def _unit(path: str, unit_type: str, heading: str | None, start: int, end: int, language: str, content: str, metadata: dict[str, Any]) -> dict[str, Any]:
-    identity = "|".join([metadata["run_id"], metadata["source_id"], metadata["commit_sha"], path, unit_type, str(start), str(end), sha256_text(content)])
+    normalized = normalize_path(path)
+    content_hash = sha256_text(content)
     return {
-        "unit_id": hashlib.sha256(identity.encode()).hexdigest(),
+        "unit_id": make_unit_id(metadata["source_id"], metadata["commit_sha"], normalized, unit_type, start, end, content_hash),
         "source_id": metadata["source_id"],
+        "platform": metadata["platform"],
+        "repository_url": metadata["repository_url"],
+        "namespace": metadata["namespace"],
+        "repository_name": metadata["repository_name"],
+        "requested_ref": metadata.get("requested_ref"),
+        "resolved_branch": metadata.get("resolved_branch"),
         "commit_sha": metadata["commit_sha"],
         "path": path,
+        "normalized_path": normalized,
         "unit_type": unit_type,
         "heading": heading,
         "start_line": start,
         "end_line": end,
+        "start_byte": None,
+        "end_byte": None,
         "language": language,
-        "content_hash": sha256_text(content),
+        "file_sha256": metadata["file_sha256"],
+        "content_sha256": content_hash,
         "content": content,
+        "generator_name": "curate:code",
+        "generator_version": "1",
+        "schema_version": 1,
+        "pipeline_version": metadata["pipeline_version"],
+        "source_line_start": start,
+        "source_line_end": end,
+        "source_byte_start": None,
+        "source_byte_end": None,
         "metadata": metadata,
     }
 
@@ -155,12 +270,18 @@ def run(run: dict[str, Any]) -> dict[str, Any]:
     binary_count = 0
     text_count = 0
     broken_links: list[dict[str, Any]] = []
+    repo = parse_repository_url(run["repository_url"])
 
     metadata_base = {
-        "run_id": run["run_id"],
         "source_id": run["source_id"],
+        "platform": repo.platform,
+        "repository_url": repo.normalized,
+        "namespace": repo.namespace,
+        "repository_name": repo.name,
+        "requested_ref": run.get("requested_ref"),
+        "resolved_branch": run.get("resolved_branch") or run.get("requested_ref"),
         "commit_sha": run["commit_sha"],
-        "repository_url": run["repository_url"],
+        "pipeline_version": "0.1.0",
     }
 
     for path in sorted(snapshot.rglob("*")):
@@ -177,10 +298,28 @@ def run(run: dict[str, Any]) -> dict[str, Any]:
                 "path": relative,
                 "size_bytes": path.stat().st_size,
                 "sha256": digest,
+                "file_sha256": digest,
+                "content_sha256": None,
                 "mime_type": mime,
                 "encoding": encoding,
                 "is_binary": is_binary,
                 "duplicate_of": duplicate_of,
+                "source_id": run["source_id"],
+                "platform": repo.platform,
+                "repository_url": repo.normalized,
+                "namespace": repo.namespace,
+                "repository_name": repo.name,
+                "requested_ref": run.get("requested_ref"),
+                "resolved_branch": run.get("resolved_branch") or run.get("requested_ref"),
+                "commit_sha": run["commit_sha"],
+                "source_line_start": None,
+                "source_line_end": None,
+                "source_byte_start": None,
+                "source_byte_end": None,
+                "generator_name": "curate:file",
+                "generator_version": "1",
+                "schema_version": 1,
+                "pipeline_version": "0.1.0",
             }
             files.append(row)
             if is_binary or text is None:
@@ -221,6 +360,20 @@ def run(run: dict[str, Any]) -> dict[str, Any]:
     }
     report_path = snapshot.parent / "curate-report.json"
     write_json(report_path, report)
+    record_stage_report({
+        "run_id": run["run_id"],
+        "stage": "curate",
+        "source_id": run["source_id"],
+        "commit_sha": run["commit_sha"],
+        "status": "passed" if report["passed"] else "failed",
+        "passed": report["passed"],
+        "summary": {"file_count": report["file_count"], "unit_count": report["unit_count"]},
+        "metrics": report,
+        "warnings": report["warnings"],
+        "errors": report["errors"],
+        "schema_version": 1,
+        "pipeline_version": "0.1.0",
+    })
     if errors:
         raise RuntimeError(f"Curation failed for {len(errors)} files; see {report_path}")
     return report

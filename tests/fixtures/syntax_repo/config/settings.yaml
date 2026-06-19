@@ -1,0 +1,4 @@
+name: agent-brain
+enabled: true
+nested:
+  value: 1

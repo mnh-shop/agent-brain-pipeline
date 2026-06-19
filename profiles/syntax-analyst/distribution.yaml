@@ -1,0 +1,3 @@
+name: agent-brain-syntax-analyst
+version: 0.1.0
+description: "You own the pipeline-owned Tree-sitter syntax stage."

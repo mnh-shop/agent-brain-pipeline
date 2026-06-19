@@ -84,7 +84,12 @@ profiles:
 
   data-curator:
     enabled: true
-    description: "Integrity, normalization, and lint orchestration"
+    description: "Integrity checks, file catalog, extraction, provenance"
+    model: null
+
+  syntax-analyst:
+    enabled: true
+    description: "Tree-sitter syntax and symbol extraction"
     model: null
 
   structure-analyst:
@@ -129,6 +134,9 @@ stages:
     required: true
   lint:
     owner_profile: data-curator
+    required: true
+  syntax:
+    owner_profile: syntax-analyst
     required: true
   structure:
     owner_profile: structure-analyst
@@ -176,16 +184,6 @@ pipeline:
     - "*.min.js"
     - "*.map"
 
-lint:
-  enabled: true
-  fail_severities:
-    - error
-    - fatal
-  check_external_links: false
-  external_link_timeout_seconds: 10
-  ruff_enabled: true
-  shellcheck_enabled: true
-
 codegraph:
   enabled: true
   required: true
@@ -205,6 +203,21 @@ codebase_memory:
   mode: "full"
   # Fallback only; the pipeline normally captures the project ID returned by CBM.
   project_name: "repository"
+
+lint:
+  enabled: true
+  fail_severities:
+    - error
+    - fatal
+  check_external_links: false
+  external_link_timeout_seconds: 10
+  ruff_enabled: true
+  shellcheck_enabled: true
+
+syntax:
+  enabled: true
+  required: true
+  max_symbol_bytes: 262144
 
 storage:
   # Paths inside containers.

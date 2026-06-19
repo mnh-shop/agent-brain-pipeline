@@ -15,7 +15,7 @@ dependencies = [
   "python-magic==0.4.27",
   "charset-normalizer==3.4.2",
   "markdown-it-py==3.0.0",
-  "ruff==0.11.12",
+  "tree-sitter-language-pack==0.10.0",
 ]
 
 [project.optional-dependencies]

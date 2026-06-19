@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from pipeline.config import data_dir, get_config
-from pipeline.db import connect, update_run
+from pipeline.db import connect, snapshot_identity, upsert_snapshot, update_run
 from pipeline.urls import RepositoryURL, parse_repository_url
 from pipeline.util import read_json, run_command, sha256_file, temporary_askpass, utc_now, write_json
 
@@ -52,6 +52,7 @@ def _record_source_and_run(
     extracted_dir: Path,
     cfg: dict[str, Any],
     run_id: str,
+    requested_ref: str | None,
 ) -> None:
     refresh_hours = float(cfg["maintenance"].get("refresh_interval_hours", 36))
     jitter = float(cfg["maintenance"].get("refresh_jitter_hours", 12))
@@ -61,8 +62,8 @@ def _record_source_and_run(
     with connect() as connection:
         connection.execute(
             """
-            INSERT INTO sources(source_id,platform,repository_url,namespace,name,default_branch,latest_commit,last_ingested_at,next_refresh_at,created_at,updated_at)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?)
+            INSERT INTO sources(source_id,platform,repository_url,namespace,name,repository_name,default_branch,latest_commit,last_ingested_at,next_refresh_at,created_at,updated_at)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(source_id) DO UPDATE SET
               repository_url=excluded.repository_url,
               default_branch=excluded.default_branch,
@@ -71,9 +72,16 @@ def _record_source_and_run(
               next_refresh_at=excluded.next_refresh_at,
               updated_at=excluded.updated_at
             """,
-            (repo.source_id, repo.platform, repo.normalized, repo.namespace, repo.name, branch, commit_sha, now, next_refresh, now, now),
+            (repo.source_id, repo.platform, repo.normalized, repo.namespace, repo.name, repo.name, branch, commit_sha, now, next_refresh, now, now),
         )
-    update_run(run_id, source_id=repo.source_id, commit_sha=commit_sha, snapshot_path=str(extracted_dir))
+    update_run(
+        run_id,
+        source_id=repo.source_id,
+        commit_sha=commit_sha,
+        resolved_branch=branch,
+        requested_ref=requested_ref,
+        snapshot_path=str(extracted_dir),
+    )
 
 
 def _raw_snapshot_is_valid(raw_dir: Path, mirror: Path, timeout: int, env: dict[str, str]) -> tuple[bool, dict[str, Any] | None]:
@@ -151,7 +159,7 @@ def run(run: dict[str, Any]) -> dict[str, Any]:
             run_command(["sh", "-c", extract_command], env=env, timeout=timeout)
             _record_source_and_run(
                 repo=repo, branch=branch, commit_sha=commit_sha, extracted_dir=extracted_dir,
-                cfg=cfg, run_id=run["run_id"],
+                cfg=cfg, run_id=run["run_id"], requested_ref=run.get("requested_ref"),
             )
             return {
                 **existing_manifest,
@@ -211,14 +219,21 @@ def run(run: dict[str, Any]) -> dict[str, Any]:
         "repository_url": repo.normalized,
         "namespace": repo.namespace,
         "name": repo.name,
+        "repository_name": repo.name,
         "branch_or_ref": branch,
+        "requested_ref": run.get("requested_ref"),
+        "resolved_branch": branch,
         "commit_sha": commit_sha,
         "acquired_at": utc_now(),
         "mirror_path": str(mirror),
         "bundle_path": str(bundle),
         "mirror_archive_path": str(mirror_archive),
         "archive_path": str(archive),
-        "git_lfs_fetch": {"attempted": lfs_result is not None, "returncode": lfs_result.returncode if lfs_result else None, "stderr_tail": lfs_result.stderr[-4000:] if lfs_result else ""},
+        "git_lfs_fetch": {
+            "attempted": lfs_result is not None,
+            "returncode": lfs_result.returncode if lfs_result else None,
+            "stderr_tail": lfs_result.stderr[-4000:] if lfs_result else "",
+        },
         "snapshot_path": str(extracted_dir),
         "checksums": checksums,
         "preserved_bytes": preserved_bytes,
@@ -227,9 +242,31 @@ def run(run: dict[str, Any]) -> dict[str, Any]:
     manifest_path = raw_dir / "source-manifest.json"
     write_json(manifest_path, manifest)
 
+    snapshot_record = {
+        "snapshot_id": snapshot_identity(repo.source_id, commit_sha, run.get("requested_ref")),
+        "source_id": repo.source_id,
+        "platform": repo.platform,
+        "repository_url": repo.normalized,
+        "namespace": repo.namespace,
+        "repository_name": repo.name,
+        "requested_ref": run.get("requested_ref"),
+        "resolved_branch": branch,
+        "commit_sha": commit_sha,
+        "path": str(extracted_dir),
+        "raw_path": str(raw_dir),
+        "bundle_path": str(bundle),
+        "archive_path": str(archive),
+        "mirror_archive_path": str(mirror_archive),
+        "schema_version": 1,
+        "pipeline_version": "0.1.0",
+        "generator_name": "acquire",
+        "generator_version": "1",
+    }
+    upsert_snapshot(snapshot_record)
+
     _record_source_and_run(
         repo=repo, branch=branch, commit_sha=commit_sha, extracted_dir=extracted_dir,
-        cfg=cfg, run_id=run["run_id"],
+        cfg=cfg, run_id=run["run_id"], requested_ref=run.get("requested_ref"),
     )
     return manifest
 

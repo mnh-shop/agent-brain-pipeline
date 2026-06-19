@@ -13,14 +13,22 @@ Please ingest https://github.com/owner/repository
 The orchestrator creates a Kanban task and submits one ingestion run. The deterministic pipeline then performs:
 
 1. **Acquire** — clone the repository, pin the commit, save a Git bundle and compressed raw snapshot.
-2. **Integrity** — verify raw bundle/archive artifacts, manifest schema, commit lineage, and snapshot safety.
-3. **Normalize** — catalog files, normalize deterministic units, and write canonical JSONL outputs.
-4. **Lint** — run deterministic syntax, link, and formatting checks without executing repository code.
-5. **Structure** — run **CodeGraphContext** over the exact snapshot.
-6. **Semantics** — run **Codebase-Memory** in full mode over the exact snapshot and retain its returned project identifier for later queries.
-7. **Retrieval** — build the pipeline's own SQLite FTS5 index and expose exact, full-text, structural, semantic, and hybrid search.
-8. **Audit** — verify that all mandatory artifacts and retrieval methods work.
-9. **Export** — create repository and report notes in the mounted Obsidian vault.
+2. **Integrity** — verify hashes, bundle contents, path safety, and source manifests.
+3. **Normalize** — classify files, detect encodings and duplicates, and create canonical units.
+4. **Lint** — run deterministic offline format and syntax checks.
+5. **Syntax** — extract canonical symbols and imports with the pipeline-owned Tree-sitter stage.
+6. **Structure** — run **CodeGraphContext** over the exact snapshot.
+7. **Semantics** — run **Codebase-Memory** in full mode over the exact snapshot and retain its returned project identifier for later queries.
+8. **Retrieval** — build the pipeline's own SQLite FTS5 index and expose exact, full-text, structural, semantic, and hybrid search.
+9. **Audit** — verify that all mandatory artifacts and retrieval methods work.
+10. **Export** — create repository and report notes in the mounted Obsidian vault.
+
+Stable identifiers are part of the data model:
+
+- unit IDs do not include `run_id`
+- symbol IDs do not include `run_id`
+- paths are normalized before hashing
+- Markdown units are line-accurate and reconstructable from stored source ranges
 
 The LLM profiles supervise and explain. Python, Git, CodeGraphContext, Codebase-Memory, SQLite, and checksums do the data processing.
 
@@ -40,6 +48,7 @@ The profile set is configurable in `config/runtime.yaml`; stage ownership is not
 - `orchestrator`
 - `source-obtainer`
 - `data-curator`
+- `syntax-analyst`
 - `structure-analyst`
 - `semantic-analyst`
 - `retrieval-manager`

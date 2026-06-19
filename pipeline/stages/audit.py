@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from pipeline.db import connect
+from pipeline.db import connect, record_stage_report
 from pipeline.search import exact_search_for_run, fts_search_for_run
 from pipeline.util import read_json, sha256_file, write_json
 
@@ -20,7 +20,7 @@ def run(run: dict[str, Any]) -> dict[str, Any]:
         snapshot.parent / "integrity-report.json",
         snapshot.parent / "normalization-report.json",
         snapshot.parent / "lint-report.json",
-        snapshot.parent / "curate-report.json",
+        snapshot.parent / "syntax-report.json",
         snapshot.parent / "structure-report.json",
         snapshot.parent / "semantic-report.json",
         snapshot.parent / "retrieval-report.json",
@@ -36,16 +36,8 @@ def run(run: dict[str, Any]) -> dict[str, Any]:
             actual = sha256_file(target) if target.exists() else None
             checks.append({"check": f"sha256:{name}", "passed": actual == expected, "expected": expected, "actual": actual})
 
-    report_files = {
-        "integrity": "integrity-report.json",
-        "normalize": "normalization-report.json",
-        "lint": "lint-report.json",
-        "structure": "structure-report.json",
-        "semantic": "semantic-report.json",
-        "retrieval": "retrieval-report.json",
-    }
-    for name, filename in report_files.items():
-        path = snapshot.parent / filename
+    for name in ("integrity", "normalize", "lint", "syntax", "structure", "semantic", "retrieval"):
+        path = snapshot.parent / f"{name}-report.json"
         value = read_json(path) if path.exists() else {}
         checks.append({"check": f"report_passed:{name}", "passed": bool(value.get("passed")), "path": str(path)})
 
@@ -68,6 +60,7 @@ def run(run: dict[str, Any]) -> dict[str, Any]:
             checks.append({"check": "exact_smoke", "passed": exact_ok, "query": token})
 
     passed = all(item["passed"] for item in checks)
+    failures = [item["check"] for item in checks if not item["passed"]]
     report = {
         "schema_version": 1,
         "run_id": run["run_id"],
@@ -78,7 +71,20 @@ def run(run: dict[str, Any]) -> dict[str, Any]:
     }
     report_path = snapshot.parent / "audit-report.json"
     write_json(report_path, report)
+    record_stage_report({
+        "run_id": run["run_id"],
+        "stage": "audit",
+        "source_id": run["source_id"],
+        "commit_sha": run["commit_sha"],
+        "status": "passed" if passed else "failed",
+        "passed": passed,
+        "summary": {"checks": len(checks)},
+        "metrics": report,
+        "warnings": [],
+        "errors": [] if passed else [{"failures": failures}],
+        "schema_version": 1,
+        "pipeline_version": "0.1.0",
+    })
     if not passed:
-        failures = [item["check"] for item in checks if not item["passed"]]
         raise RuntimeError(f"Audit failed: {', '.join(failures)}; see {report_path}")
     return report

@@ -27,8 +27,4 @@ The default uses `refresh_interval_hours: 36` and `refresh_jitter_hours: 12`, ca
 
 `profiles` determines which profile directories are rendered. `stages.<stage>.owner_profile` controls which profile is shown as responsible in run state and Kanban views. The deterministic worker still executes the code; the profile supervises, explains, retries, and handles user interaction.
 
-The integrity, normalize, and lint stages are all owned by `data-curator`.
-
-## Lint policy
-
-`lint.fail_severities` controls which severities fail the lint stage. Valid severities are `info`, `warning`, `error`, and `fatal`. External link checking is disabled by default for reproducible offline runs.
+For the current pipeline split, `integrity`, `normalize`, and `lint` remain owned by `data-curator`, while `syntax` is owned by `syntax-analyst` and runs before `structure`.

@@ -18,7 +18,6 @@ PROVIDER_ENV = {
     "deepseek": ("DEEPSEEK_API_KEY", "DEEPSEEK_BASE_URL"),
 }
 VALID_ROTATION = {"fill_first", "round_robin", "least_used", "random"}
-VALID_LINT_SEVERITIES = {"info", "warning", "error", "fatal"}
 
 
 def load(path: Path) -> dict[str, Any]:
@@ -75,11 +74,6 @@ def validate(cfg: dict[str, Any]) -> list[str]:
             errors.append(f"stages.{stage}.owner_profile references unknown profile {owner!r}")
         elif not profiles[owner].get("enabled", False):
             errors.append(f"stages.{stage}.owner_profile {owner!r} is disabled")
-
-    lint_cfg = cfg.get("lint", {})
-    severities = lint_cfg.get("fail_severities", ["error", "fatal"])
-    if not severities or any(str(level).lower() not in VALID_LINT_SEVERITIES for level in severities):
-        errors.append("lint.fail_severities must contain only info, warning, error, or fatal")
 
     primary = cfg.get("routing", {}).get("primary", {})
     primary_provider = primary.get("provider")
@@ -227,24 +221,20 @@ def render(cfg: dict[str, Any], repo_root: Path) -> None:
     # subset it needs. The pipeline never receives Telegram or LLM credentials.
     pipeline_keys = (
         "version", "general", "security", "scm", "stages", "maintenance",
-        "pipeline", "lint", "codegraph", "codebase_memory", "storage", "api", "logging",
+        "pipeline", "lint", "syntax", "codegraph", "codebase_memory", "storage", "api", "logging",
     )
     pipeline_cfg = {key: cfg[key] for key in pipeline_keys if key in cfg}
     pipeline_config_path = runtime / "pipeline.yaml"
     write_secret(pipeline_config_path, yaml.safe_dump(pipeline_cfg, sort_keys=False))
 
-    def host_path(value: str) -> str:
-        path = Path(value)
-        return value if path.is_absolute() else str(path)
-
     compose_env = {
         "HERMES_IMAGE": cfg["images"]["hermes"],
         "PIPELINE_IMAGE": cfg["images"]["pipeline"],
         "PIPELINE_PORT": str(cfg["api"]["public_host_port"]),
-        "PIPELINE_CONFIG_PATH": str(pipeline_config_path.relative_to(repo_root)),
-        "DATA_HOST_PATH": host_path(storage["data_host_path"]),
-        "HERMES_HOST_PATH": host_path(storage["hermes_host_path"]),
-        "OBSIDIAN_HOST_PATH": host_path(storage["obsidian_host_path"]),
+        "PIPELINE_CONFIG_PATH": str(pipeline_config_path.resolve()),
+        "DATA_HOST_PATH": str((repo_root / storage["data_host_path"]).resolve()) if not Path(storage["data_host_path"]).is_absolute() else storage["data_host_path"],
+        "HERMES_HOST_PATH": str((repo_root / storage["hermes_host_path"]).resolve()) if not Path(storage["hermes_host_path"]).is_absolute() else storage["hermes_host_path"],
+        "OBSIDIAN_HOST_PATH": str((repo_root / storage["obsidian_host_path"]).resolve()) if not Path(storage["obsidian_host_path"]).is_absolute() else storage["obsidian_host_path"],
         "AGENT_BRAIN_API_TOKEN": cfg["security"]["internal_api_token"],
         "HERMES_TIMEZONE": cfg.get("general", {}).get("timezone", "America/Bogota"),
     }
