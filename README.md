@@ -13,12 +13,14 @@ Please ingest https://github.com/owner/repository
 The orchestrator creates a Kanban task and submits one ingestion run. The deterministic pipeline then performs:
 
 1. **Acquire** — clone the repository, pin the commit, save a Git bundle and compressed raw snapshot.
-2. **Curate** — verify hashes, classify files, detect encodings and duplicates, and create searchable units.
-3. **Structure** — run **CodeGraphContext** over the exact snapshot.
-4. **Semantics** — run **Codebase-Memory** in full mode over the exact snapshot and retain its returned project identifier for later queries.
-5. **Retrieval** — build the pipeline's own SQLite FTS5 index and expose exact, full-text, structural, semantic, and hybrid search.
-6. **Audit** — verify that all mandatory artifacts and retrieval methods work.
-7. **Export** — create repository and report notes in the mounted Obsidian vault.
+2. **Integrity** — verify raw bundle/archive artifacts, manifest schema, commit lineage, and snapshot safety.
+3. **Normalize** — catalog files, normalize deterministic units, and write canonical JSONL outputs.
+4. **Lint** — run deterministic syntax, link, and formatting checks without executing repository code.
+5. **Structure** — run **CodeGraphContext** over the exact snapshot.
+6. **Semantics** — run **Codebase-Memory** in full mode over the exact snapshot and retain its returned project identifier for later queries.
+7. **Retrieval** — build the pipeline's own SQLite FTS5 index and expose exact, full-text, structural, semantic, and hybrid search.
+8. **Audit** — verify that all mandatory artifacts and retrieval methods work.
+9. **Export** — create repository and report notes in the mounted Obsidian vault.
 
 The LLM profiles supervise and explain. Python, Git, CodeGraphContext, Codebase-Memory, SQLite, and checksums do the data processing.
 

@@ -17,6 +17,9 @@ def run(run: dict[str, Any]) -> dict[str, Any]:
         raw / "source.tar.zst",
         raw / "source-manifest.json",
         raw / "checksums.sha256",
+        snapshot.parent / "integrity-report.json",
+        snapshot.parent / "normalization-report.json",
+        snapshot.parent / "lint-report.json",
         snapshot.parent / "curate-report.json",
         snapshot.parent / "structure-report.json",
         snapshot.parent / "semantic-report.json",
@@ -33,8 +36,16 @@ def run(run: dict[str, Any]) -> dict[str, Any]:
             actual = sha256_file(target) if target.exists() else None
             checks.append({"check": f"sha256:{name}", "passed": actual == expected, "expected": expected, "actual": actual})
 
-    for name in ("curate", "structure", "semantic", "retrieval"):
-        path = snapshot.parent / f"{name}-report.json"
+    report_files = {
+        "integrity": "integrity-report.json",
+        "normalize": "normalization-report.json",
+        "lint": "lint-report.json",
+        "structure": "structure-report.json",
+        "semantic": "semantic-report.json",
+        "retrieval": "retrieval-report.json",
+    }
+    for name, filename in report_files.items():
+        path = snapshot.parent / filename
         value = read_json(path) if path.exists() else {}
         checks.append({"check": f"report_passed:{name}", "passed": bool(value.get("passed")), "path": str(path)})
 

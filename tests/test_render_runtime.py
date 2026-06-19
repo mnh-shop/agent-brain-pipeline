@@ -16,8 +16,10 @@ def test_example_structure_has_expected_profiles():
     root = Path(__file__).parents[1]
     cfg = yaml.safe_load((root / "config" / "runtime.example.yaml").read_text())
     assert cfg["maintenance"]["refresh_interval_hours"] == 36
-    assert cfg["stages"]["structure"]["owner_profile"] == "structure-analyst"
-    assert cfg["stages"]["semantics"]["owner_profile"] == "semantic-analyst"
+    assert cfg["stages"]["integrity"]["owner_profile"] == "data-curator"
+    assert cfg["stages"]["normalize"]["owner_profile"] == "data-curator"
+    assert cfg["stages"]["lint"]["owner_profile"] == "data-curator"
+    assert cfg["lint"]["fail_severities"] == ["error", "fatal"]
 
 
 def test_validation_rejects_placeholders():
@@ -39,6 +41,7 @@ def test_render_writes_key_pool_and_fallbacks(tmp_path):
     cfg["providers"]["deepseek"]["enabled"] = True
     cfg["providers"]["deepseek"]["keys"] = ["sk-deepseek-first"]
     cfg["routing"]["fallbacks"] = [{"provider": "deepseek", "model": "deepseek-chat"}]
+    cfg["lint"]["fail_severities"] = ["error", "fatal"]
     cfg["storage"]["data_host_path"] = str(tmp_path / "data")
     cfg["storage"]["hermes_host_path"] = str(tmp_path / "hermes")
     cfg["storage"]["obsidian_host_path"] = str(tmp_path / "vault")
@@ -64,8 +67,9 @@ def test_render_writes_key_pool_and_fallbacks(tmp_path):
     assert "telegram" not in pipeline_cfg
     assert "providers" not in pipeline_cfg
     assert pipeline_cfg["scm"]["github_token"] == ""
+    assert pipeline_cfg["lint"]["fail_severities"] == ["error", "fatal"]
     assert (work / ".runtime" / "pipeline.yaml").stat().st_mode & 0o777 == 0o600
 
     compose_env = (work / ".runtime" / "compose.env").read_text()
     assert "PIPELINE_CONFIG_PATH=.runtime/pipeline.yaml" in compose_env
-    assert f"DATA_HOST_PATH={tmp_path / 'data'}" not in compose_env
+    assert f"DATA_HOST_PATH={tmp_path / 'data'}" in compose_env

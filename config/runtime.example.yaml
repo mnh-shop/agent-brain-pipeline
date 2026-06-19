@@ -84,7 +84,7 @@ profiles:
 
   data-curator:
     enabled: true
-    description: "Integrity checks, file catalog, extraction, provenance"
+    description: "Integrity, normalization, and lint orchestration"
     model: null
 
   structure-analyst:
@@ -121,7 +121,13 @@ stages:
   acquire:
     owner_profile: source-obtainer
     required: true
-  curate:
+  integrity:
+    owner_profile: data-curator
+    required: true
+  normalize:
+    owner_profile: data-curator
+    required: true
+  lint:
     owner_profile: data-curator
     required: true
   structure:
@@ -169,6 +175,16 @@ pipeline:
   ignored_globs:
     - "*.min.js"
     - "*.map"
+
+lint:
+  enabled: true
+  fail_severities:
+    - error
+    - fatal
+  check_external_links: false
+  external_link_timeout_seconds: 10
+  ruff_enabled: true
+  shellcheck_enabled: true
 
 codegraph:
   enabled: true

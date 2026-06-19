@@ -24,8 +24,18 @@ def run(run: dict[str, Any]) -> dict[str, Any]:
 
     snapshot = Path(run["snapshot_path"])
     reports = {}
-    for name in ("curate", "structure", "semantic", "retrieval", "audit"):
-        path = snapshot.parent / f"{name}-report.json"
+    report_files = {
+        "integrity": "integrity-report.json",
+        "normalize": "normalization-report.json",
+        "lint": "lint-report.json",
+        "structure": "structure-report.json",
+        "semantic": "semantic-report.json",
+        "retrieval": "retrieval-report.json",
+        "audit": "audit-report.json",
+        "curate": "curate-report.json",
+    }
+    for name, filename in report_files.items():
+        path = snapshot.parent / filename
         if path.exists():
             reports[name] = read_json(path)
 
@@ -52,7 +62,10 @@ status: verified-and-indexed
 ## Pipeline status
 
 - Raw source preserved: yes
-- Integrity and curation: {'passed' if reports.get('curate', {}).get('passed') else 'failed'}
+- Integrity: {'passed' if reports.get('integrity', {}).get('passed') else 'failed'}
+- Normalize: {'passed' if reports.get('normalize', {}).get('passed') else 'failed'}
+- Lint: {'passed' if reports.get('lint', {}).get('passed') else 'failed'}
+- Compatibility curate alias: {'passed' if reports.get('curate', {}).get('passed') else 'available'}
 - CodeGraphContext: {'passed' if reports.get('structure', {}).get('passed') else 'failed'}
 - Codebase-Memory: {'passed' if reports.get('semantic', {}).get('passed') else 'failed'}
 - Full-text retrieval: {'passed' if reports.get('retrieval', {}).get('passed') else 'failed'}

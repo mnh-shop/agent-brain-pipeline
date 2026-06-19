@@ -11,7 +11,7 @@
 
 ```text
 Telegram -> orchestrator -> POST /runs -> SQLite queue -> pipeline worker
-  -> acquire -> curate -> CodeGraphContext -> Codebase-Memory
+  -> acquire -> integrity -> normalize -> lint -> CodeGraphContext -> Codebase-Memory
   -> FTS/exact retrieval -> audit -> Obsidian export
 ```
 
@@ -22,3 +22,9 @@ CodeGraphContext is used as the explicit structural graph stage. Codebase-Memory
 ## Raw versus derived
 
 Raw source artifacts are immutable and checksum-addressed. All curation, graphs, indexes, reports, and Obsidian notes are derived and can be rebuilt from the raw snapshot and exact tool versions.
+
+The first three deterministic stages are intentionally split:
+
+- Integrity checks the raw acquisition artifacts and snapshot safety.
+- Normalize catalogs files and units into canonical JSONL and SQLite rows.
+- Lint performs offline syntax and link validation only.

@@ -94,9 +94,13 @@ def stage_report(run_id: str, stage: str) -> Any:
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
     match = next((item for item in run.get("stages", []) if item.get("stage") == stage), None)
-    if not match or not match.get("report_path"):
+    path = Path(str(match["report_path"])) if match and match.get("report_path") else None
+    if path is None and stage == "curate" and run.get("snapshot_path"):
+        alias = Path(str(run["snapshot_path"])).parent / "curate-report.json"
+        if alias.exists():
+            path = alias
+    if path is None:
         raise HTTPException(status_code=404, detail="Stage report not available")
-    path = Path(str(match["report_path"]))
     if path.suffix.lower() != ".json" or not path.exists():
         raise HTTPException(status_code=404, detail="Stage report is not a readable JSON report")
     return read_json(path)

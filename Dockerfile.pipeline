@@ -10,7 +10,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates curl git git-lfs jq file ripgrep rsync zstd tar gzip \
+    ca-certificates curl git git-lfs jq file ripgrep rsync zstd tar gzip shellcheck \
     openssh-client libmagic1 build-essential zlib1g-dev \
     && git lfs install --system \
     && rm -rf /var/lib/apt/lists/*
