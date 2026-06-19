@@ -91,7 +91,7 @@ def _report_path(stage: str, run: dict[str, Any], report: dict[str, Any]) -> str
     mapping = {
         "curate": "curate-report.json",
         "syntax": "syntax-report.json",
-        "structure": "structure-report.json",
+        "structure": "codegraph-report.json",
         "semantics": "semantic-report.json",
         "retrieval": "retrieval-report.json",
         "audit": "audit-report.json",

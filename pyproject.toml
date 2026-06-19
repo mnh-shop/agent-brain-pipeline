@@ -28,3 +28,4 @@ include = ["pipeline*"]
 testpaths = ["tests"]
 pythonpath = ["."]
 addopts = "-q"
+markers = ["integration: tests that require external binaries or services"]

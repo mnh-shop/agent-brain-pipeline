@@ -21,6 +21,7 @@ def run(run: dict[str, Any]) -> dict[str, Any]:
         snapshot.parent / "normalization-report.json",
         snapshot.parent / "lint-report.json",
         snapshot.parent / "syntax-report.json",
+        snapshot.parent / "codegraph-report.json",
         snapshot.parent / "structure-report.json",
         snapshot.parent / "semantic-report.json",
         snapshot.parent / "retrieval-report.json",

@@ -1,0 +1,1 @@
+{"query":"helper","command":["codegraphcontext","find","pattern","helper"],"returncode":0,"stdout_path":"raw/query-helper.stdout.txt","stderr_path":"raw/query-helper.stderr.txt","passed":true}

@@ -1,0 +1,1 @@
+{"edge_id":"raw-edge-1","source_node_id":"raw-node-1","target_node_id":"raw-node-2","relation":"IMPORTS","source_id":"source","commit_sha":"deadbeef","path":"src/helper.py","schema_version":1,"pipeline_version":"0.1.0"}

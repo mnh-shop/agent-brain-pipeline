@@ -28,6 +28,8 @@ def run(run: dict[str, Any]) -> dict[str, Any]:
         path = snapshot.parent / f"{name}-report.json"
         if path.exists():
             reports[name] = read_json(path)
+    if "structure" not in reports and (snapshot.parent / "codegraph-report.json").exists():
+        reports["structure"] = read_json(snapshot.parent / "codegraph-report.json")
 
     title = f"{repo.namespace} - {repo.name}"
     source_note = source_dir / f"{_safe_note(title)}.md"

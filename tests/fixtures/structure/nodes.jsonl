@@ -1,0 +1,2 @@
+{"node_id":"raw-node-1","kind":"symbol","label":"example.repo.Helper","path":"src/helper.py","normalized_path":"src/helper.py","qualified_name":"example.repo.Helper","start_line":1,"end_line":4,"start_byte":0,"end_byte":40}
+{"node_id":"raw-node-2","kind":"symbol","label":"example.repo.Missing","path":"src/other.py","normalized_path":"src/other.py","qualified_name":"example.repo.Missing","start_line":1,"end_line":1,"start_byte":0,"end_byte":1}
