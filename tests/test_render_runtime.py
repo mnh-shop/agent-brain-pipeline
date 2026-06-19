@@ -65,3 +65,7 @@ def test_render_writes_key_pool_and_fallbacks(tmp_path):
     assert "providers" not in pipeline_cfg
     assert pipeline_cfg["scm"]["github_token"] == ""
     assert (work / ".runtime" / "pipeline.yaml").stat().st_mode & 0o777 == 0o600
+
+    compose_env = (work / ".runtime" / "compose.env").read_text()
+    assert "PIPELINE_CONFIG_PATH=.runtime/pipeline.yaml" in compose_env
+    assert f"DATA_HOST_PATH={tmp_path / 'data'}" not in compose_env
