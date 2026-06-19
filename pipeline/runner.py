@@ -66,7 +66,7 @@ def execute_run(run_id: str) -> None:
                     logger.exception("Could not refresh Kanban after failure")
                 logger.exception("Run %s failed at stage %s", run_id, stage)
                 return
-        update_run(run_id, status="completed", current_stage="complete", completed_at=utc_now(), error=None)
+        update_run(run_id, status="ready_for_wiki", current_stage="complete", completed_at=utc_now(), error=None)
         try:
             export.refresh_kanban()
         except Exception:

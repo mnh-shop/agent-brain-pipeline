@@ -15,6 +15,8 @@ from pipeline.db import create_run, get_run, initialize, list_runs, update_run
 from pipeline.maintenance import scheduler_loop
 from pipeline.runner import worker_loop
 from pipeline.search import exact_search, fts_search, hybrid_search, semantic_search, structural_search, vector_search
+from pipeline.stages import export
+from pipeline.stages.audit import verify_run
 from pipeline.urls import parse_repository_url
 from pipeline.util import read_json
 
@@ -86,7 +88,16 @@ def run_status(run_id: str) -> dict[str, Any]:
     run = get_run(run_id)
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
-    return run
+    report_path = Path(str(run.get("snapshot_path", ""))).parent / "audit-report.json" if run.get("snapshot_path") else None
+    quality_gate = None
+    if report_path and report_path.exists():
+        report = read_json(report_path)
+        quality_gate = {
+            "state": report.get("state"),
+            "passed": report.get("passed"),
+            "failed_checks": report.get("failed_checks", []),
+        }
+    return {**run, "quality_gate": quality_gate}
 
 
 @app.get("/runs/{run_id}/reports/{stage}", dependencies=[Depends(authenticate)])
@@ -110,6 +121,15 @@ def retry_run(run_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="Run not found")
     update_run(run_id, status="queued", current_stage=None, error=None, completed_at=None)
     return {"run_id": run_id, "status": "queued"}
+
+
+@app.post("/runs/{run_id}/verify", dependencies=[Depends(authenticate)])
+def verify_run_route(run_id: str) -> dict[str, Any]:
+    run = get_run(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    report = verify_run(run)
+    return report
 
 
 @app.post("/search", dependencies=[Depends(authenticate)])

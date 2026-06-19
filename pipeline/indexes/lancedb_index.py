@@ -193,12 +193,13 @@ class LanceDBIndex:
                     query += " WHERE " + " AND ".join(clauses)
             return int(connection.execute(query, params).fetchone()[0])
 
-    def rows(self, filters: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    def rows(self, filters: dict[str, Any] | None = None, *, dimensions: int | None = None) -> list[dict[str, Any]]:
         if lancedb is not None:
             db = lancedb.connect(str(self.path))
             table = db.open_table(self.table_name)
             expr = _filter_expression(filters)
-            data = table.search([0.0]).limit(1000000)
+            dimension = max(1, int(dimensions or 1))
+            data = table.search([0.0] * dimension).limit(1000000)
             if expr:
                 data = data.where(expr)
             return [dict(row) for row in data.to_list()]

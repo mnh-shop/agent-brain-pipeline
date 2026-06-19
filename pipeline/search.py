@@ -9,54 +9,57 @@ from pipeline.config import get_config
 from pipeline.db import connect, get_run
 from pipeline.util import component_dir, read_json, run_command
 
+TERMINAL_SEARCH_STATUSES = ("completed", "deterministic_passed", "ready_for_wiki")
+
 
 def _latest_completed_runs(source_id: str | None, commit_sha: str | None = None) -> list[dict[str, Any]]:
     max_sources = int(get_config().get("pipeline", {}).get("max_global_search_sources", 8))
+    statuses = ",".join("?" for _ in TERMINAL_SEARCH_STATUSES)
     with connect() as connection:
         if source_id and commit_sha:
             rows = connection.execute(
-                """
+                f"""
                 SELECT run_id FROM runs
-                WHERE source_id=? AND commit_sha=? AND status='completed'
+                WHERE source_id=? AND commit_sha=? AND status IN ({statuses})
                 ORDER BY completed_at DESC
                 LIMIT 1
                 """,
-                (source_id, commit_sha),
+                (source_id, commit_sha, *TERMINAL_SEARCH_STATUSES),
             ).fetchall()
         elif source_id:
             rows = connection.execute(
-                "SELECT run_id FROM runs WHERE source_id=? AND status='completed' ORDER BY completed_at DESC LIMIT 1",
-                (source_id,),
+                f"SELECT run_id FROM runs WHERE source_id=? AND status IN ({statuses}) ORDER BY completed_at DESC LIMIT 1",
+                (source_id, *TERMINAL_SEARCH_STATUSES),
             ).fetchall()
         elif commit_sha:
             rows = connection.execute(
-                """
+                f"""
                 SELECT run_id FROM (
                   SELECT run_id, source_id, completed_at,
                          ROW_NUMBER() OVER (PARTITION BY source_id ORDER BY completed_at DESC) AS row_number
                   FROM runs
-                  WHERE status='completed' AND source_id IS NOT NULL AND commit_sha=?
+                  WHERE status IN ({statuses}) AND source_id IS NOT NULL AND commit_sha=?
                 )
                 WHERE row_number=1
                 ORDER BY completed_at DESC
                 LIMIT ?
                 """,
-                (commit_sha, max_sources),
+                (*TERMINAL_SEARCH_STATUSES, commit_sha, max_sources),
             ).fetchall()
         else:
             rows = connection.execute(
-                """
+                f"""
                 SELECT run_id FROM (
                   SELECT run_id, source_id, completed_at,
                          ROW_NUMBER() OVER (PARTITION BY source_id ORDER BY completed_at DESC) AS row_number
                   FROM runs
-                  WHERE status='completed' AND source_id IS NOT NULL
+                  WHERE status IN ({statuses}) AND source_id IS NOT NULL
                 )
                 WHERE row_number=1
                 ORDER BY completed_at DESC
                 LIMIT ?
                 """,
-                (max_sources,),
+                (*TERMINAL_SEARCH_STATUSES, max_sources),
             ).fetchall()
     runs: list[dict[str, Any]] = []
     for row in rows:
@@ -64,7 +67,7 @@ def _latest_completed_runs(source_id: str | None, commit_sha: str | None = None)
         if result:
             runs.append(result)
     if not runs:
-        raise ValueError("No completed ingestion matches the request")
+        raise ValueError("No deterministic ingestion matches the request")
     return runs
 
 

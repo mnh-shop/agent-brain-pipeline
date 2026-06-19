@@ -105,7 +105,7 @@ def refresh_kanban(vault: Path | None = None) -> None:
     groups: dict[str, list[Any]] = {"Queued": [], "Running": [], "Failed": [], "Complete": []}
     for row in rows:
         status = row["status"]
-        if status == "completed": group = "Complete"
+        if status in {"completed", "deterministic_passed", "ready_for_wiki"}: group = "Complete"
         elif status == "failed": group = "Failed"
         elif status in {"running"}: group = "Running"
         else: group = "Queued"

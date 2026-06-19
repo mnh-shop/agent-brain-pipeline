@@ -28,6 +28,8 @@ SUPPORTED_UNIT_TYPES = {
     "code_chunk",
 }
 
+ELIGIBLE_RUN_STATUSES = ("running", "completed", "deterministic_passed", "ready_for_wiki")
+
 
 def _vector_checksum(vector: list[float]) -> str:
     payload = ",".join(f"{value:.12f}" for value in vector)
@@ -51,7 +53,7 @@ def _eligible_units(run: dict[str, Any]) -> dict[str, Any]:
             SELECT u.*, r.status AS run_status, r.completed_at, r.updated_at AS run_updated_at
             FROM units u
             JOIN runs r ON r.run_id = u.run_id
-            WHERE r.status IN ('running', 'completed')
+            WHERE r.status IN ('running', 'completed', 'deterministic_passed', 'ready_for_wiki')
             ORDER BY COALESCE(r.completed_at, r.updated_at), u.path, u.start_line, u.unit_id
             """,
         ).fetchall()
@@ -251,6 +253,7 @@ def run(run: dict[str, Any], *, backend: LocalDeterministicEmbeddingBackend | No
         "commit_sha": run["commit_sha"],
         "index_path": str(index.path),
         "table": index.table_name,
+        "metric": index.metric,
         "backend": index.backend,
         "embedding_model": backend.info.model,
         "model_revision": backend.info.revision,

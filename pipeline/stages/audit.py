@@ -1,96 +1,138 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
-from pipeline.db import connect, record_stage_report
-from pipeline.search import exact_search_for_run, fts_search_for_run
-from pipeline.util import read_json, sha256_file, write_json
+from pipeline.db import PIPELINE_VERSION, record_stage_report, update_run
+from pipeline.stages._audit import (
+    build_artifact_manifest,
+    compare_reproducibility,
+    validate_graph_integrity,
+    validate_markdown_exports,
+    validate_retrieval_integrity,
+    validate_source_integrity,
+    validate_units_and_symbols,
+    validate_vector_integrity,
+)
+from pipeline.util import sha256_text, write_json
 
 
-def run(run: dict[str, Any]) -> dict[str, Any]:
+def _serialise_checks(checks: list[Any]) -> list[dict[str, Any]]:
+    rows = []
+    for item in checks:
+        rows.append({"check": item.name, "passed": item.passed, **item.details})
+    return rows
+
+
+def _failed_checks(report: dict[str, Any]) -> list[dict[str, Any]]:
+    failures: list[dict[str, Any]] = []
+    for group, items in report.get("checks", {}).items():
+        for item in items:
+            if not item.get("passed"):
+                failures.append({"group": group, **item})
+    return failures
+
+
+def _report(run: dict[str, Any]) -> dict[str, Any]:
     snapshot = Path(run["snapshot_path"])
-    raw = snapshot.parent / "raw"
-    required_files = [
-        raw / "repository.bundle",
-        raw / "mirror.git.tar.zst",
-        raw / "source.tar.zst",
-        raw / "source-manifest.json",
-        raw / "checksums.sha256",
-        snapshot.parent / "integrity-report.json",
-        snapshot.parent / "normalization-report.json",
-        snapshot.parent / "lint-report.json",
-        snapshot.parent / "syntax-report.json",
-        snapshot.parent / "codegraph-report.json",
-        snapshot.parent / "structure-report.json",
-        snapshot.parent / "codebase-memory-report.json",
-        snapshot.parent / "semantic-report.json",
-        snapshot.parent / "vector-report.json",
-        snapshot.parent / "retrieval-report.json",
-    ]
-    checks = []
-    for path in required_files:
-        checks.append({"check": f"exists:{path.name}", "passed": path.exists(), "path": str(path)})
+    base = snapshot.parent
+    source_checks = validate_source_integrity(run)
+    unit_checks = validate_units_and_symbols(run)
+    graph_checks = validate_graph_integrity(run)
+    vector_checks = validate_vector_integrity(run)
+    reproducibility = compare_reproducibility(run)
+    artifact_manifest = build_artifact_manifest(run)
+    markdown_checks = validate_markdown_exports(run, artifact_manifest)
+    retrieval_checks = validate_retrieval_integrity(run)
+    artifact_manifest_payload = json.dumps(artifact_manifest, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    artifact_manifest_sha256 = sha256_text(artifact_manifest_payload)
+    state = "ready_for_wiki" if all(item.passed for item in source_checks + unit_checks + graph_checks + vector_checks + markdown_checks + retrieval_checks) and reproducibility["passed"] else "failed"
 
-    if (raw / "source-manifest.json").exists():
-        manifest = read_json(raw / "source-manifest.json")
-        for name, expected in manifest.get("checksums", {}).items():
-            target = raw / name
-            actual = sha256_file(target) if target.exists() else None
-            checks.append({"check": f"sha256:{name}", "passed": actual == expected, "expected": expected, "actual": actual})
-
-    for name in ("integrity", "normalize", "lint", "syntax", "structure", "semantic", "vector", "retrieval"):
-        path = snapshot.parent / f"{name}-report.json"
-        value = read_json(path) if path.exists() else {}
-        checks.append({"check": f"report_passed:{name}", "passed": bool(value.get("passed")), "path": str(path)})
-    if (snapshot.parent / "codebase-memory-report.json").exists():
-        value = read_json(snapshot.parent / "codebase-memory-report.json")
-        checks.append({"check": "report_passed:codebase-memory", "passed": bool(value.get("passed")), "path": str(snapshot.parent / "codebase-memory-report.json")})
-
-    with connect() as connection:
-        file_count = connection.execute("SELECT count(*) FROM files WHERE run_id=?", (run["run_id"],)).fetchone()[0]
-        unit_count = connection.execute("SELECT count(*) FROM units WHERE run_id=?", (run["run_id"],)).fetchone()[0]
-    checks.append({"check": "file_catalog_nonempty", "passed": file_count > 0, "count": file_count})
-    checks.append({"check": "search_units_nonempty", "passed": unit_count > 0, "count": unit_count})
-
-    sample = None
-    with connect() as connection:
-        sample = connection.execute("SELECT content,path FROM units WHERE run_id=? ORDER BY path LIMIT 1", (run["run_id"],)).fetchone()
-    if sample:
-        token = next((word for word in sample["content"].split() if len(word) >= 4), None)
-        if token:
-            token = token.strip("`*_#[](){}<>,.;:'\"")
-            fts_ok = bool(fts_search_for_run(token, run["run_id"], 3)) if token else False
-            exact_ok = bool(exact_search_for_run(token, run, 3)) if token else False
-            checks.append({"check": "fts_smoke", "passed": fts_ok, "query": token})
-            checks.append({"check": "exact_smoke", "passed": exact_ok, "query": token})
-
-    passed = all(item["passed"] for item in checks)
-    failures = [item["check"] for item in checks if not item["passed"]]
     report = {
         "schema_version": 1,
         "run_id": run["run_id"],
         "source_id": run["source_id"],
         "commit_sha": run["commit_sha"],
-        "checks": checks,
-        "passed": passed,
+        "state": state,
+        "checks": {
+            "source": _serialise_checks(source_checks),
+            "units": _serialise_checks(unit_checks),
+            "graph": _serialise_checks(graph_checks),
+            "vector": _serialise_checks(vector_checks),
+            "markdown": _serialise_checks(markdown_checks),
+            "retrieval": _serialise_checks(retrieval_checks),
+            "reproducibility": [{"check": "reproducibility", "passed": reproducibility["passed"], **{k: v for k, v in reproducibility.items() if k != "passed"}}],
+        },
+        "artifact_manifest": artifact_manifest,
+        "artifact_manifest_sha256": artifact_manifest_sha256,
+        "reproducibility": reproducibility,
+        "failed_checks": [],
     }
-    report_path = snapshot.parent / "audit-report.json"
+    report["passed"] = report["state"] == "ready_for_wiki"
+    report["failed_checks"] = _failed_checks(report)
+    return report
+
+
+def run(run: dict[str, Any]) -> dict[str, Any]:
+    snapshot = Path(run["snapshot_path"])
+    base = snapshot.parent
+    report = _report(run)
+    report_path = base / "audit-report.json"
+    reproducibility_path = base / "reproducibility-report.json"
+    artifact_manifest_path = base / "artifact-manifest.json"
+
     write_json(report_path, report)
+    write_json(reproducibility_path, report["reproducibility"])
+    write_json(artifact_manifest_path, report["artifact_manifest"])
+    artifact_manifest_sha = sha256_text(json.dumps(report["artifact_manifest"], sort_keys=True, ensure_ascii=False, separators=(",", ":")))
+    (base / "artifact-manifest.sha256").write_text(f"{artifact_manifest_sha}  artifact-manifest.json\n", encoding="utf-8")
+    (base / "audit-report.md").write_text(
+        "\n".join(
+            [
+                "# Audit report",
+                "",
+                f"- State: {report['state']}",
+                f"- Passed: {report['passed']}",
+                f"- Failed checks: {len(report['failed_checks'])}",
+                f"- Checks: {sum(len(v) for v in report['checks'].values())}",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (base / "reproducibility-report.md").write_text(
+        "\n".join(
+            [
+                "# Reproducibility report",
+                "",
+                f"- Passed: {reproducibility['passed']}",
+                f"- Current SHA256: {reproducibility['current_sha256']}",
+                f"- Replay SHA256: {reproducibility['replay_sha256']}",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    update_run(run["run_id"], status="deterministic_passed" if report["passed"] else "failed", current_stage="audit", error=None if report["passed"] else "quality gate failed")
     record_stage_report({
         "run_id": run["run_id"],
         "stage": "audit",
         "source_id": run["source_id"],
         "commit_sha": run["commit_sha"],
-        "status": "passed" if passed else "failed",
-        "passed": passed,
-        "summary": {"checks": len(checks)},
+        "status": "passed" if report["passed"] else "failed",
+        "passed": report["passed"],
+        "summary": {"state": report["state"], "failed_checks": len(report["failed_checks"])},
         "metrics": report,
-        "warnings": [],
-        "errors": [] if passed else [{"failures": failures}],
+        "warnings": [] if report["passed"] else ["Deterministic gate failed"],
+        "errors": [] if report["passed"] else report["failed_checks"],
         "schema_version": 1,
-        "pipeline_version": "0.1.0",
+        "pipeline_version": PIPELINE_VERSION,
     })
-    if not passed:
-        raise RuntimeError(f"Audit failed: {', '.join(failures)}; see {report_path}")
+    if not report["passed"]:
+        raise RuntimeError(f"Audit failed; see {report_path}")
     return report
+
+
+def verify_run(run: dict[str, Any]) -> dict[str, Any]:
+    return _report(run)
