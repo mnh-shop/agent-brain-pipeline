@@ -1,0 +1,3 @@
+name: agent-brain-source-obtainer
+version: 0.1.0
+description: "You supervise GitHub/GitLab acquisition and immutable raw-source preservation."

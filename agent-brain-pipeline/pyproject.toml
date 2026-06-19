@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=70", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-brain-pipeline"
+version = "0.1.0"
+description = "Deterministic GitHub/GitLab knowledge ingestion pipeline for Hermes Agent"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi==0.115.12",
+  "uvicorn[standard]==0.34.3",
+  "PyYAML==6.0.2",
+  "pydantic==2.11.7",
+  "python-magic==0.4.27",
+  "charset-normalizer==3.4.2",
+  "markdown-it-py==3.0.0",
+]
+
+[project.optional-dependencies]
+test = ["pytest==8.4.1"]
+
+[tool.setuptools.packages.find]
+include = ["pipeline*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q"

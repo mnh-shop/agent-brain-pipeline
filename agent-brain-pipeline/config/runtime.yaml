@@ -1,0 +1,210 @@
+version: 1
+
+# This is the only file you edit. Keep config/runtime.yaml private.
+# Copy this file to config/runtime.yaml before deployment.
+
+general:
+  timezone: "America/Bogota"
+
+images:
+  # Replace latest with a tested version or immutable digest after first deployment.
+  hermes: "nousresearch/hermes-agent:latest"
+  pipeline: "agent-brain-pipeline:local"
+
+security:
+  # Generate with: openssl rand -hex 32
+  internal_api_token: "CHANGE_ME_TO_A_LONG_RANDOM_VALUE"
+
+telegram:
+  # The default profile is the orchestrator and normally owns the only bot.
+  # Additional profile bots can be added to this map later with separate tokens.
+  bots:
+    orchestrator:
+      enabled: true
+      bot_token: "PASTE_BOTFATHER_TOKEN_HERE"
+      allowed_user_ids:
+        - 123456789
+      home_channel: ""
+
+scm:
+  # Optional for public repos; recommended for API rate limits and private repos.
+  github_token: ""
+  gitlab_token: ""
+  clone_timeout_seconds: 1800
+  max_repository_bytes: 10737418240  # 10 GiB combined preserved artifacts
+  fetch_git_lfs: true
+
+providers:
+  openrouter:
+    enabled: true
+    keys:
+      - "PASTE_OPENROUTER_KEY_HERE"
+      # - "PASTE_SECOND_OPENROUTER_KEY_HERE"
+    rotation: round_robin  # fill_first | round_robin | least_used | random
+    base_url: "https://openrouter.ai/api/v1"
+
+  opencode-go:
+    enabled: false
+    keys:
+      - ""
+    rotation: fill_first
+    base_url: ""
+
+  deepseek:
+    enabled: false
+    keys:
+      - ""
+    rotation: fill_first
+    base_url: "https://api.deepseek.com"
+
+routing:
+  # Model IDs are editable because provider catalogs change independently.
+  primary:
+    provider: openrouter
+    model: "deepseek/deepseek-v4-flash"
+
+  # Disabled providers are automatically omitted when Hermes config is rendered.
+  fallbacks:
+    - provider: opencode-go
+      model: "SET_OPENCODE_GO_MODEL_ID"
+    - provider: deepseek
+      model: "deepseek-chat"
+
+profiles:
+  # Profiles are data, not hardcoded Python classes. Add, remove, or disable here.
+  orchestrator:
+    enabled: true
+    description: "Telegram-facing coordinator and Kanban owner"
+    model: null
+
+  source-obtainer:
+    enabled: true
+    description: "GitHub/GitLab acquisition and raw-source preservation"
+    model: null
+
+  data-curator:
+    enabled: true
+    description: "Integrity checks, file catalog, extraction, provenance"
+    model: null
+
+  structure-analyst:
+    enabled: true
+    description: "CodeGraphContext structural graph owner"
+    model: null
+
+  semantic-analyst:
+    enabled: true
+    description: "Codebase-Memory semantic graph owner"
+    model: null
+
+  retrieval-manager:
+    enabled: true
+    description: "Exact, FTS, structural, semantic, and hybrid retrieval"
+    model: null
+
+  quality-auditor:
+    enabled: true
+    description: "Independent deterministic ingestion audit"
+    model: null
+
+  maintainer:
+    enabled: true
+    description: "Scheduled repository refresh and rebuild supervision"
+    model: null
+
+  knowledge-writer:
+    enabled: false
+    description: "Optional evidence-grounded architecture/wiki generation"
+    model: null
+
+stages:
+  acquire:
+    owner_profile: source-obtainer
+    required: true
+  curate:
+    owner_profile: data-curator
+    required: true
+  structure:
+    owner_profile: structure-analyst
+    required: true
+  semantics:
+    owner_profile: semantic-analyst
+    required: true
+  retrieval:
+    owner_profile: retrieval-manager
+    required: true
+  audit:
+    owner_profile: quality-auditor
+    required: true
+  export:
+    owner_profile: orchestrator
+    required: true
+
+maintenance:
+  enabled: true
+  # Default is randomly scheduled between 24 and 48 hours after a completed fetch.
+  refresh_interval_hours: 36
+  refresh_jitter_hours: 12
+  scheduler_poll_minutes: 10
+  keep_snapshots_per_repository: 5
+
+pipeline:
+  worker_poll_seconds: 3
+  max_global_search_sources: 8
+  stage_timeout_seconds: 7200
+  max_text_file_bytes: 5242880  # 5 MiB
+  code_chunk_lines: 180
+  code_chunk_overlap_lines: 20
+  markdown_chunk_characters: 12000
+  ignored_directories:
+    - .git
+    - .codebase-memory
+    - node_modules
+    - vendor
+    - dist
+    - build
+    - .venv
+    - venv
+    - __pycache__
+  ignored_globs:
+    - "*.min.js"
+    - "*.map"
+
+codegraph:
+  enabled: true
+  required: true
+  command: "codegraphcontext"
+  setup_args: ["config", "db", "kuzudb"]
+  index_args: ["index", "{analysis_path}", "--force"]
+  smoke_args: ["list"]
+  stats_args: ["stats", "{analysis_path}"]
+  export_args: ["bundle", "export", "{bundle_path}", "--repo", "{analysis_path}"]
+
+codebase_memory:
+  enabled: true
+  required: true
+  command: "codebase-memory-mcp"
+  workers: 4
+  semantic_limit: 12
+  mode: "full"
+  # Fallback only; the pipeline normally captures the project ID returned by CBM.
+  project_name: "repository"
+
+storage:
+  # Paths inside containers.
+  data_dir: "/data"
+  obsidian_dir: "/vault"
+
+  # Paths on the Docker host. Relative paths resolve from this repo.
+  data_host_path: "./.runtime/data"
+  hermes_host_path: "./.runtime/hermes"
+  obsidian_host_path: "../agent-brain"
+
+api:
+  host: "0.0.0.0"
+  port: 8080
+  public_host_port: 8080
+  base_url_from_hermes: "http://knowledge-pipeline:8080"
+
+logging:
+  level: INFO
