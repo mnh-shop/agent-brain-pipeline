@@ -1,0 +1,1 @@
+{"project":"repo-123","nodes":[{"id":"n1","path":"src/app.py","qualified_name":"pkg.helper","kind":"function","start_line":1,"end_line":4}],"edges":[{"source":"n1","target":"n1","relation":"CONTAINS"}]}

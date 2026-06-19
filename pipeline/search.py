@@ -151,10 +151,13 @@ def semantic_search(query: str, source_id: str | None = None, limit: int = 10) -
     for run in _latest_runs(source_id)[:limit]:
         derived = component_dir(run, "codebase-memory")
         env = {"CBM_CACHE_DIR": str(derived), "CBM_WORKERS": str(cfg.get("workers", 4)), "CBM_LOG_LEVEL": "error"}
-        semantic_report = Path(run["snapshot_path"]).parent / "semantic-report.json"
+        semantic_report = Path(run["snapshot_path"]).parent / "codebase-memory-report.json"
+        legacy_report = Path(run["snapshot_path"]).parent / "semantic-report.json"
         project = str(cfg.get("project_name", "repository"))
         if semantic_report.exists():
             project = str(read_json(semantic_report).get("project") or project)
+        elif legacy_report.exists():
+            project = str(read_json(legacy_report).get("project") or project)
         payload = {"query": query, "limit": limit, "project": project}
         result = run_command([str(cfg.get("command", "codebase-memory-mcp")), "cli", "semantic_query", json.dumps(payload)], env=env, check=False, timeout=180)
         try:

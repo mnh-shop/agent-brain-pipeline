@@ -92,7 +92,7 @@ def _report_path(stage: str, run: dict[str, Any], report: dict[str, Any]) -> str
         "curate": "curate-report.json",
         "syntax": "syntax-report.json",
         "structure": "codegraph-report.json",
-        "semantics": "semantic-report.json",
+        "semantics": "codebase-memory-report.json",
         "retrieval": "retrieval-report.json",
         "audit": "audit-report.json",
     }

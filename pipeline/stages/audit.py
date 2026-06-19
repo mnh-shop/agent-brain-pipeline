@@ -23,6 +23,7 @@ def run(run: dict[str, Any]) -> dict[str, Any]:
         snapshot.parent / "syntax-report.json",
         snapshot.parent / "codegraph-report.json",
         snapshot.parent / "structure-report.json",
+        snapshot.parent / "codebase-memory-report.json",
         snapshot.parent / "semantic-report.json",
         snapshot.parent / "retrieval-report.json",
     ]
@@ -41,6 +42,9 @@ def run(run: dict[str, Any]) -> dict[str, Any]:
         path = snapshot.parent / f"{name}-report.json"
         value = read_json(path) if path.exists() else {}
         checks.append({"check": f"report_passed:{name}", "passed": bool(value.get("passed")), "path": str(path)})
+    if (snapshot.parent / "codebase-memory-report.json").exists():
+        value = read_json(snapshot.parent / "codebase-memory-report.json")
+        checks.append({"check": "report_passed:codebase-memory", "passed": bool(value.get("passed")), "path": str(snapshot.parent / "codebase-memory-report.json")})
 
     with connect() as connection:
         file_count = connection.execute("SELECT count(*) FROM files WHERE run_id=?", (run["run_id"],)).fetchone()[0]
