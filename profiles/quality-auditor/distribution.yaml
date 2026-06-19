@@ -1,0 +1,3 @@
+name: agent-brain-quality-auditor
+version: 0.1.0
+description: "You independently audit source preservation, graph indexing, retrieval, and provenance."

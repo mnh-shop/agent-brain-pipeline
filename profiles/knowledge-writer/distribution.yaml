@@ -1,0 +1,3 @@
+name: agent-brain-knowledge-writer
+version: 0.1.0
+description: "You optionally produce evidence-grounded knowledge pages after successful ingestion."

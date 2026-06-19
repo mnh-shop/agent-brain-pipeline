@@ -1,0 +1,39 @@
+services:
+  knowledge-pipeline:
+    build:
+      context: .
+      dockerfile: Dockerfile.pipeline
+    image: ${PIPELINE_IMAGE:-agent-brain-pipeline:local}
+    container_name: agent-brain-pipeline
+    restart: unless-stopped
+    command: ["python", "-m", "pipeline.api"]
+    environment:
+      AGENT_BRAIN_CONFIG: /app/config/runtime.yaml
+      PYTHONUNBUFFERED: "1"
+    ports:
+      - "${PIPELINE_PORT:-8080}:8080"
+    volumes:
+      - ${DATA_HOST_PATH:-./.runtime/data}:/data
+      - ${OBSIDIAN_HOST_PATH:-../agent-brain}:/vault
+      - ${PIPELINE_CONFIG_PATH:-./.runtime/pipeline.yaml}:/app/config/runtime.yaml:ro
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/health"]
+      interval: 20s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  hermes:
+    image: ${HERMES_IMAGE:-nousresearch/hermes-agent:latest}
+    container_name: agent-brain-hermes
+    restart: unless-stopped
+    command: ["gateway", "run"]
+    depends_on:
+      knowledge-pipeline:
+        condition: service_healthy
+    volumes:
+      - ${HERMES_HOST_PATH:-./.runtime/hermes}:/opt/data
+    environment:
+      HERMES_TIMEZONE: ${HERMES_TIMEZONE:-America/Bogota}
+      PIPELINE_API_URL: http://knowledge-pipeline:8080
+      AGENT_BRAIN_API_TOKEN: ${AGENT_BRAIN_API_TOKEN}

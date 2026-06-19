@@ -1,0 +1,226 @@
+from __future__ import annotations
+
+import hashlib
+import mimetypes
+import re
+from pathlib import Path
+from typing import Any
+
+import magic
+from charset_normalizer import from_bytes
+
+from pipeline.config import get_config
+from pipeline.db import replace_files, replace_units
+from pipeline.util import ignored, read_json, run_command, sha256_file, sha256_text, write_json
+
+LANGUAGE_BY_SUFFIX = {
+    ".py": "python", ".js": "javascript", ".jsx": "javascript", ".ts": "typescript", ".tsx": "typescript",
+    ".go": "go", ".rs": "rust", ".java": "java", ".kt": "kotlin", ".c": "c", ".h": "c",
+    ".cc": "cpp", ".cpp": "cpp", ".hpp": "cpp", ".cs": "csharp", ".rb": "ruby", ".php": "php",
+    ".sh": "shell", ".bash": "shell", ".zsh": "shell", ".yaml": "yaml", ".yml": "yaml",
+    ".json": "json", ".toml": "toml", ".md": "markdown", ".rst": "rst", ".txt": "text",
+    ".html": "html", ".css": "css", ".sql": "sql", ".proto": "protobuf", ".graphql": "graphql",
+}
+
+
+def _decode(path: Path, max_bytes: int) -> tuple[str | None, str | None, bool, str]:
+    raw = path.read_bytes()
+    mime = magic.from_buffer(raw[:8192], mime=True) or mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+    if b"\x00" in raw[:8192] or len(raw) > max_bytes:
+        return None, None, True, mime
+    match = from_bytes(raw).best()
+    if not match:
+        return None, None, True, mime
+    text = str(match)
+    if not text.strip() and raw:
+        return None, str(match.encoding or "unknown"), True, mime
+    return text, str(match.encoding or "utf-8"), False, mime
+
+
+def _markdown_units(text: str, path: str, metadata: dict[str, Any], max_chars: int) -> list[dict[str, Any]]:
+    lines = text.splitlines()
+    sections: list[tuple[str, int, int]] = []
+    starts = [(i, line.lstrip("#").strip()) for i, line in enumerate(lines, start=1) if re.match(r"^#{1,6}\s+", line)]
+    if not starts:
+        starts = [(1, Path(path).name)]
+    for index, (start, heading) in enumerate(starts):
+        end = starts[index + 1][0] - 1 if index + 1 < len(starts) else len(lines)
+        sections.append((heading, start, end))
+
+    units = []
+    for heading, start, end in sections:
+        content = "\n".join(lines[start - 1:end]).strip()
+        if not content:
+            continue
+        for offset in range(0, len(content), max_chars):
+            piece = content[offset:offset + max_chars]
+            units.append(_unit(path, "section", heading, start, end, "markdown", piece, metadata))
+    return units
+
+
+def _code_units(text: str, path: str, metadata: dict[str, Any], language: str, lines_per_chunk: int, overlap: int) -> list[dict[str, Any]]:
+    lines = text.splitlines()
+    units = []
+    step = max(1, lines_per_chunk - overlap)
+    for start_index in range(0, len(lines), step):
+        end_index = min(len(lines), start_index + lines_per_chunk)
+        piece = "\n".join(lines[start_index:end_index]).strip()
+        if piece:
+            units.append(_unit(path, "code_chunk", None, start_index + 1, end_index, language, piece, metadata))
+        if end_index >= len(lines):
+            break
+    return units
+
+
+def _unit(path: str, unit_type: str, heading: str | None, start: int, end: int, language: str, content: str, metadata: dict[str, Any]) -> dict[str, Any]:
+    identity = "|".join([metadata["run_id"], metadata["source_id"], metadata["commit_sha"], path, unit_type, str(start), str(end), sha256_text(content)])
+    return {
+        "unit_id": hashlib.sha256(identity.encode()).hexdigest(),
+        "source_id": metadata["source_id"],
+        "commit_sha": metadata["commit_sha"],
+        "path": path,
+        "unit_type": unit_type,
+        "heading": heading,
+        "start_line": start,
+        "end_line": end,
+        "language": language,
+        "content_hash": sha256_text(content),
+        "content": content,
+        "metadata": metadata,
+    }
+
+
+def _verify_raw(snapshot: Path) -> list[dict[str, Any]]:
+    raw = snapshot.parent / "raw"
+    manifest_path = raw / "source-manifest.json"
+    if not manifest_path.exists():
+        raise RuntimeError(f"Missing acquisition manifest: {manifest_path}")
+    manifest = read_json(manifest_path)
+    checks: list[dict[str, Any]] = []
+    for name, expected in manifest.get("checksums", {}).items():
+        target = raw / name
+        actual = sha256_file(target) if target.exists() else None
+        checks.append({"artifact": name, "expected": expected, "actual": actual, "passed": actual == expected})
+    bundle = raw / "repository.bundle"
+    mirror = Path(str(manifest.get("mirror_path", "")))
+    if not mirror.exists():
+        raise RuntimeError(f"Missing acquisition mirror needed to verify bundle: {mirror}")
+    verified = run_command(["git", "--git-dir", str(mirror), "bundle", "verify", str(bundle)], check=False, timeout=300)
+    checks.append({"artifact": "repository.bundle:git-verify", "passed": verified.returncode == 0, "stderr": verified.stderr[-4000:]})
+    failures = [item["artifact"] for item in checks if not item["passed"]]
+    if failures:
+        raise RuntimeError("Raw integrity verification failed: " + ", ".join(failures))
+    return checks
+
+
+def _broken_markdown_links(text: str, file_path: Path, snapshot: Path) -> list[str]:
+    broken: list[str] = []
+    for target in re.findall(r"!?\[[^\]]*\]\(([^)]+)\)", text):
+        target = target.strip().split()[0].strip("<>")
+        if not target or target.startswith(("http://", "https://", "mailto:", "#", "data:")):
+            continue
+        relative = target.split("#", 1)[0].split("?", 1)[0]
+        if not relative:
+            continue
+        candidate = (file_path.parent / relative).resolve()
+        try:
+            candidate.relative_to(snapshot.resolve())
+        except ValueError:
+            broken.append(target)
+            continue
+        if not candidate.exists():
+            broken.append(target)
+    return broken
+
+
+def run(run: dict[str, Any]) -> dict[str, Any]:
+    cfg = get_config()
+    snapshot = Path(run["snapshot_path"])
+    if not snapshot.exists():
+        raise RuntimeError(f"Snapshot does not exist: {snapshot}")
+    integrity_checks = _verify_raw(snapshot)
+
+    ignored_dirs = list(cfg["pipeline"].get("ignored_directories", []))
+    ignored_globs = list(cfg["pipeline"].get("ignored_globs", []))
+    max_bytes = int(cfg["pipeline"].get("max_text_file_bytes", 5 * 1024 * 1024))
+    code_lines = int(cfg["pipeline"].get("code_chunk_lines", 180))
+    overlap = int(cfg["pipeline"].get("code_chunk_overlap_lines", 20))
+    markdown_chars = int(cfg["pipeline"].get("markdown_chunk_characters", 12000))
+
+    files: list[dict[str, Any]] = []
+    units: list[dict[str, Any]] = []
+    seen_hashes: dict[str, str] = {}
+    errors: list[dict[str, str]] = []
+    encodings: dict[str, int] = {}
+    binary_count = 0
+    text_count = 0
+    broken_links: list[dict[str, Any]] = []
+
+    metadata_base = {
+        "run_id": run["run_id"],
+        "source_id": run["source_id"],
+        "commit_sha": run["commit_sha"],
+        "repository_url": run["repository_url"],
+    }
+
+    for path in sorted(snapshot.rglob("*")):
+        if not path.is_file() or ignored(path, snapshot, ignored_dirs, ignored_globs):
+            continue
+        relative = path.relative_to(snapshot).as_posix()
+        try:
+            digest = sha256_file(path)
+            text, encoding, is_binary, mime = _decode(path, max_bytes)
+            duplicate_of = seen_hashes.get(digest)
+            if not duplicate_of:
+                seen_hashes[digest] = relative
+            row = {
+                "path": relative,
+                "size_bytes": path.stat().st_size,
+                "sha256": digest,
+                "mime_type": mime,
+                "encoding": encoding,
+                "is_binary": is_binary,
+                "duplicate_of": duplicate_of,
+            }
+            files.append(row)
+            if is_binary or text is None:
+                binary_count += 1
+                continue
+            text_count += 1
+            encodings[encoding or "unknown"] = encodings.get(encoding or "unknown", 0) + 1
+            language = LANGUAGE_BY_SUFFIX.get(path.suffix.lower(), "text")
+            metadata = {**metadata_base, "file_sha256": digest, "mime_type": mime, "encoding": encoding}
+            if language == "markdown":
+                for target in _broken_markdown_links(text, path, snapshot):
+                    broken_links.append({"path": relative, "target": target})
+                units.extend(_markdown_units(text, relative, metadata, markdown_chars))
+            else:
+                units.extend(_code_units(text, relative, metadata, language, code_lines, overlap))
+        except Exception as exc:
+            errors.append({"path": relative, "error": str(exc)})
+
+    replace_files(run["run_id"], files)
+    replace_units(run["run_id"], units)
+    report = {
+        "schema_version": 1,
+        "run_id": run["run_id"],
+        "source_id": run["source_id"],
+        "commit_sha": run["commit_sha"],
+        "snapshot_path": str(snapshot),
+        "file_count": len(files),
+        "text_file_count": text_count,
+        "binary_file_count": binary_count,
+        "duplicate_file_count": sum(1 for row in files if row.get("duplicate_of")),
+        "unit_count": len(units),
+        "encodings": encodings,
+        "raw_integrity_checks": integrity_checks,
+        "broken_relative_markdown_links": broken_links,
+        "warnings": ([f"{len(broken_links)} broken relative Markdown links"] if broken_links else []),
+        "errors": errors,
+        "passed": len(errors) == 0,
+    }
+    report_path = snapshot.parent / "curate-report.json"
+    write_json(report_path, report)
+    if errors:
+        raise RuntimeError(f"Curation failed for {len(errors)} files; see {report_path}")
+    return report

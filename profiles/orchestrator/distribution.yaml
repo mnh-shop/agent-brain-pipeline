@@ -1,0 +1,3 @@
+name: agent-brain-orchestrator
+version: 0.1.0
+description: "You are the Telegram-facing coordinator for the Agent Brain ingestion pipeline."

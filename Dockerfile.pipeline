@@ -1,0 +1,52 @@
+FROM python:3.12-slim-bookworm
+
+ARG CODEGRAPH_VERSION=0.5.1
+ARG CBM_VERSION=0.8.1
+ARG TARGETARCH
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl git git-lfs jq file ripgrep rsync zstd tar gzip \
+    openssh-client libmagic1 build-essential zlib1g-dev \
+    && git lfs install --system \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY pyproject.toml /app/pyproject.toml
+COPY pipeline /app/pipeline
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir . \
+    && pip install --no-cache-dir "codegraphcontext[kuzu]==${CODEGRAPH_VERSION}"
+
+# Install a pinned Codebase-Memory release and verify it against the release checksum file.
+RUN set -eux; \
+    case "${TARGETARCH:-amd64}" in \
+      amd64) CBM_ARCH=amd64 ;; \
+      arm64) CBM_ARCH=arm64 ;; \
+      *) echo "Unsupported TARGETARCH=${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    base="https://github.com/DeusData/codebase-memory-mcp/releases/download/v${CBM_VERSION}"; \
+    asset="codebase-memory-mcp-linux-${CBM_ARCH}.tar.gz"; \
+    curl -fsSL "$base/$asset" -o "/tmp/$asset"; \
+    curl -fsSL "$base/checksums.txt" -o /tmp/checksums.txt; \
+    (cd /tmp && grep "  $asset$" checksums.txt | sha256sum -c -); \
+    mkdir -p /tmp/cbm; \
+    tar -xzf "/tmp/$asset" -C /tmp/cbm; \
+    binary="$(find /tmp/cbm -type f -name codebase-memory-mcp | head -n1)"; \
+    test -n "$binary"; \
+    install -m 0755 "$binary" /usr/local/bin/codebase-memory-mcp; \
+    rm -rf /tmp/cbm "/tmp/$asset" /tmp/checksums.txt
+
+COPY scripts /app/scripts
+COPY profiles /app/profiles
+COPY config/runtime.example.yaml /app/config/runtime.example.yaml
+
+RUN mkdir -p /data /vault
+
+EXPOSE 8080
+CMD ["python", "-m", "pipeline.api"]
