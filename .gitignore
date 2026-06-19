@@ -1,0 +1,19 @@
+# Local secrets and generated runtime state
+config/runtime.yaml
+.runtime/
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+build/
+
+# IDE / OS
+.DS_Store
+.idea/
+.vscode/
+
+# Pipeline runtime data (never commit)
+data/
