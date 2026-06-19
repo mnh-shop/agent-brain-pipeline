@@ -114,7 +114,14 @@ def run(run: dict[str, Any]) -> dict[str, Any]:
         + "\n",
         encoding="utf-8",
     )
-    update_run(run["run_id"], status="deterministic_passed" if report["passed"] else "failed", current_stage="audit", error=None if report["passed"] else "quality gate failed")
+    update_run(
+        run["run_id"],
+        status="deterministic_passed" if report["passed"] else "failed",
+        current_stage="audit",
+        wiki_state="awaiting_wiki_agent" if report["passed"] else "wiki_validation_failed",
+        error=None if report["passed"] else "quality gate failed",
+        wiki_error=None if report["passed"] else "quality gate failed",
+    )
     record_stage_report({
         "run_id": run["run_id"],
         "stage": "audit",

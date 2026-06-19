@@ -243,4 +243,4 @@ def test_migration_preserves_existing_runs_files_and_units(tmp_path: Path, monke
         assert connection.execute("SELECT count(*) FROM runs").fetchone()[0] == 1
         assert connection.execute("SELECT count(*) FROM files").fetchone()[0] == 1
         assert connection.execute("SELECT count(*) FROM units").fetchone()[0] == 1
-        assert connection.execute("SELECT version FROM schema_migrations ORDER BY version").fetchall()[-1][0] == 4
+        assert connection.execute("SELECT version FROM schema_migrations ORDER BY version").fetchall()[-1][0] == 5

@@ -55,9 +55,11 @@ The profile set is configurable in `config/runtime.yaml`; stage ownership is not
 - `retrieval-manager`
 - `quality-auditor`
 - `maintainer`
-- `knowledge-writer` (disabled by default)
+- `knowledge-writer` (enabled by default)
 
 The default Hermes profile is configured as the orchestrator so only one Telegram gateway is required. Other profiles are available for explicit chat, delegated tasks, inspection, retries, and maintenance. Every rendered profile includes the `agent-brain-pipeline` skill and a dependency-free API client for ingest, status, reports, retries, and all five search modes.
+
+The `knowledge-writer` profile also ships with the official Hermes `llm-wiki` and `obsidian` skills so it can write candidate pages into the mounted vault without reimplementing those behaviors.
 
 ## One configuration file
 

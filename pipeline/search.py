@@ -9,7 +9,7 @@ from pipeline.config import get_config
 from pipeline.db import connect, get_run
 from pipeline.util import component_dir, read_json, run_command
 
-TERMINAL_SEARCH_STATUSES = ("completed", "deterministic_passed", "ready_for_wiki")
+TERMINAL_SEARCH_STATUSES = ("completed", "deterministic_passed", "ready_for_wiki", "ready_for_review")
 
 
 def _latest_completed_runs(source_id: str | None, commit_sha: str | None = None) -> list[dict[str, Any]]:

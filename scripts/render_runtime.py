@@ -68,6 +68,16 @@ def validate(cfg: dict[str, Any]) -> list[str]:
     profiles = cfg.get("profiles", {})
     if not profiles.get("orchestrator", {}).get("enabled", False):
         errors.append("profiles.orchestrator must be enabled")
+    if profiles.get("knowledge-writer", {}).get("enabled", False):
+        wiki = cfg.get("wiki", {})
+        if wiki.get("enabled") is not True:
+            errors.append("wiki.enabled must be true when knowledge-writer is enabled")
+        for key in ("vault_path", "raw_path", "wiki_path", "candidate_path", "canonical_path"):
+            if key not in wiki or not wiki.get(key):
+                errors.append(f"wiki.{key} must be configured when knowledge-writer is enabled")
+        for key in ("auto_generate_after_audit", "auto_promote"):
+            if key not in wiki:
+                errors.append(f"wiki.{key} must be configured when knowledge-writer is enabled")
     for stage, stage_cfg in cfg.get("stages", {}).items():
         owner = stage_cfg.get("owner_profile")
         if owner not in profiles:
@@ -134,6 +144,18 @@ def env_lines(cfg: dict[str, Any], profile: str, telegram_enabled: bool) -> list
             lines.append(f"TELEGRAM_ALLOWED_USERS={allowed}")
             if bot.get("home_channel"):
                 lines.append(f"TELEGRAM_HOME_CHANNEL={bot['home_channel']}")
+    if profile == "knowledge-writer":
+        wiki = cfg.get("wiki", {})
+        if wiki:
+            lines.extend(
+                [
+                    f"WIKI_PATH={wiki.get('wiki_path', '/vault/wiki')}",
+                    f"OBSIDIAN_VAULT_PATH={wiki.get('vault_path', '/vault')}",
+                    f"WIKI_RAW_PATH={wiki.get('raw_path', '/vault/raw')}",
+                    f"WIKI_CANDIDATE_PATH={wiki.get('candidate_path', '/vault/wiki/candidates')}",
+                    f"WIKI_CANONICAL_PATH={wiki.get('canonical_path', '/vault/wiki/canonical')}",
+                ]
+            )
     return lines
 
 
@@ -221,7 +243,7 @@ def render(cfg: dict[str, Any], repo_root: Path) -> None:
     # subset it needs. The pipeline never receives Telegram or LLM credentials.
     pipeline_keys = (
         "version", "general", "security", "scm", "stages", "maintenance",
-        "pipeline", "lint", "syntax", "codegraph", "codebase_memory", "embeddings", "lancedb", "storage", "api", "logging",
+        "pipeline", "lint", "syntax", "codegraph", "codebase_memory", "embeddings", "lancedb", "storage", "api", "logging", "wiki",
     )
     pipeline_cfg = {key: cfg[key] for key in pipeline_keys if key in cfg}
     pipeline_config_path = runtime / "pipeline.yaml"

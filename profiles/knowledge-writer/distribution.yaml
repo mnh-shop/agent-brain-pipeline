@@ -1,3 +1,9 @@
 name: agent-brain-knowledge-writer
-version: 0.1.0
-description: "You optionally produce evidence-grounded knowledge pages after successful ingestion."
+version: 0.2.0
+description: "You produce evidence-grounded knowledge pages after successful ingestion."
+skills:
+  - agent-brain-pipeline
+  - llm-wiki
+  - obsidian
+  - write-grounded-note
+hermes_source_version: "0.16.0"

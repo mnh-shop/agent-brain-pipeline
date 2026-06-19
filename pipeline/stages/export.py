@@ -33,6 +33,7 @@ def run(run: dict[str, Any]) -> dict[str, Any]:
 
     title = f"{repo.namespace} - {repo.name}"
     source_note = source_dir / f"{_safe_note(title)}.md"
+    wiki_state = run.get("wiki_state") or "awaiting_wiki_agent"
     content = f"""---
 source_id: {run['source_id']}
 platform: {repo.platform}
@@ -40,6 +41,7 @@ repository: {repo.normalized}
 commit: {run['commit_sha']}
 last_ingested: {utc_now()}
 status: verified-and-indexed
+wiki_state: {wiki_state}
 ---
 
 # {repo.namespace}/{repo.name}
@@ -63,6 +65,7 @@ status: verified-and-indexed
 - Vector index: {'passed' if reports.get('vector', {}).get('passed') else 'failed'}
 - Full-text retrieval: {'passed' if reports.get('retrieval', {}).get('passed') else 'failed'}
 - Quality audit: {'passed' if reports.get('audit', {}).get('passed') else 'failed'}
+- Wiki state: {wiki_state}
 
 ## Counts
 
@@ -105,7 +108,7 @@ def refresh_kanban(vault: Path | None = None) -> None:
     groups: dict[str, list[Any]] = {"Queued": [], "Running": [], "Failed": [], "Complete": []}
     for row in rows:
         status = row["status"]
-        if status in {"completed", "deterministic_passed", "ready_for_wiki"}: group = "Complete"
+        if status in {"completed", "deterministic_passed", "ready_for_wiki", "ready_for_review"}: group = "Complete"
         elif status == "failed": group = "Failed"
         elif status in {"running"}: group = "Running"
         else: group = "Queued"
@@ -116,6 +119,8 @@ def refresh_kanban(vault: Path | None = None) -> None:
         if not groups[group]:
             lines.append("- _None_")
         for row in groups[group]:
-            lines.append(f"- **{row['run_id']}** — {row['repository_url']} — `{row['current_stage'] or row['status']}`")
+            wiki_state = row["wiki_state"] if "wiki_state" in row.keys() else None
+            suffix = f" / {wiki_state}" if wiki_state else ""
+            lines.append(f"- **{row['run_id']}** — {row['repository_url']} — `{row['current_stage'] or row['status']}{suffix}`")
         lines.append("")
     board.write_text("\n".join(lines), encoding="utf-8")

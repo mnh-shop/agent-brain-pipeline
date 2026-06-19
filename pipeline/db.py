@@ -13,7 +13,7 @@ from pipeline.schemas.ids import normalize_path, snapshot_identity, stable_hash,
 from pipeline.util import utc_now
 
 PIPELINE_VERSION = "0.1.0"
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 _DB_LOCK = threading.RLock()
 
 
@@ -98,6 +98,15 @@ def _migrate_1(connection: sqlite3.Connection) -> None:
             current_stage TEXT,
             commit_sha TEXT,
             snapshot_path TEXT,
+            wiki_state TEXT,
+            wiki_job_id TEXT,
+            wiki_started_at TEXT,
+            wiki_completed_at TEXT,
+            wiki_failed_at TEXT,
+            wiki_error TEXT,
+            wiki_manifest_path TEXT,
+            wiki_evidence_path TEXT,
+            wiki_page_manifest_path TEXT,
             error TEXT,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
@@ -731,6 +740,22 @@ def _migrate_4(connection: sqlite3.Connection) -> None:
         connection.execute("PRAGMA foreign_keys=ON")
 
 
+def _migrate_5(connection: sqlite3.Connection) -> None:
+    for column, definition in (
+        ("wiki_state", "TEXT"),
+        ("wiki_job_id", "TEXT"),
+        ("wiki_started_at", "TEXT"),
+        ("wiki_completed_at", "TEXT"),
+        ("wiki_failed_at", "TEXT"),
+        ("wiki_error", "TEXT"),
+        ("wiki_manifest_path", "TEXT"),
+        ("wiki_evidence_path", "TEXT"),
+        ("wiki_page_manifest_path", "TEXT"),
+    ):
+        _ensure_column(connection, "runs", column, definition)
+    _ensure_index(connection, "idx_runs_wiki_state", "CREATE INDEX idx_runs_wiki_state ON runs(wiki_state, updated_at)")
+
+
 def initialize() -> None:
     with connect() as connection:
         connection.executescript(
@@ -749,6 +774,9 @@ def initialize() -> None:
         if 4 not in _migration_versions(connection):
             _migrate_4(connection)
             _record_migration(connection, 4)
+        if 5 not in _migration_versions(connection):
+            _migrate_5(connection)
+            _record_migration(connection, 5)
 
 
 def create_run(repository_url: str, requested_ref: str | None, trigger: str) -> str:

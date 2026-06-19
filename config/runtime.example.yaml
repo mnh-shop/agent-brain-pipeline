@@ -118,8 +118,8 @@ profiles:
     model: null
 
   knowledge-writer:
-    enabled: false
-    description: "Optional evidence-grounded architecture/wiki generation"
+    enabled: true
+    description: "Evidence-grounded wiki generation after deterministic validation"
     model: null
 
 stages:
@@ -156,6 +156,16 @@ stages:
   export:
     owner_profile: orchestrator
     required: true
+
+wiki:
+  enabled: true
+  vault_path: "/vault"
+  raw_path: "/vault/raw"
+  wiki_path: "/vault/wiki"
+  candidate_path: "/vault/wiki/candidates"
+  canonical_path: "/vault/wiki/canonical"
+  auto_generate_after_audit: true
+  auto_promote: false
 
 maintenance:
   enabled: true

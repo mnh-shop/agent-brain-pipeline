@@ -18,7 +18,7 @@ from pipeline.search import exact_search, fts_search, hybrid_search, semantic_se
 from pipeline.stages import export
 from pipeline.stages.audit import verify_run
 from pipeline.urls import parse_repository_url
-from pipeline.util import read_json
+from pipeline.util import read_json, utc_now, write_json
 
 logging.basicConfig(level=getattr(logging, get_config().get("logging", {}).get("level", "INFO").upper(), logging.INFO))
 logger = logging.getLogger(__name__)
@@ -52,6 +52,20 @@ class SearchRequest(BaseModel):
     source_id: str | None = None
     commit_sha: str | None = None
     limit: int = Field(default=10, ge=1, le=50)
+
+
+class WikiJobRequest(BaseModel):
+    job_id: str | None = None
+    notes: str | None = None
+
+
+class WikiFailureRequest(WikiJobRequest):
+    error: str = Field(min_length=1)
+
+
+class WikiPageManifestRequest(WikiJobRequest):
+    pages: list[dict[str, Any]] = Field(default_factory=list)
+    manifest_name: str | None = None
 
 
 def authenticate(authorization: str | None = Header(default=None)) -> None:
@@ -92,12 +106,94 @@ def run_status(run_id: str) -> dict[str, Any]:
     quality_gate = None
     if report_path and report_path.exists():
         report = read_json(report_path)
+        failures = report.get("failed_checks", [])
         quality_gate = {
             "state": report.get("state"),
             "passed": report.get("passed"),
-            "failed_checks": report.get("failed_checks", []),
+            "failed_checks": failures,
+            "failed_check_count": len(failures),
+            "failed_check_names": [item.get("check") for item in failures if item.get("check")],
+            "summary": "passed" if report.get("passed") else f"{len(failures)} failed checks",
         }
     return {**run, "quality_gate": quality_gate}
+
+
+def _run_base(run: dict[str, Any]) -> Path:
+    snapshot = run.get("snapshot_path")
+    if not snapshot:
+        raise HTTPException(status_code=404, detail="Run snapshot not available")
+    return Path(snapshot).parent
+
+
+def _read_optional_json(path: Path) -> dict[str, Any] | None:
+    return read_json(path) if path.exists() else None
+
+
+def _deterministic_manifest(run: dict[str, Any]) -> dict[str, Any]:
+    base = _run_base(run)
+    audit_report = _read_optional_json(base / "audit-report.json")
+    reproducibility = _read_optional_json(base / "reproducibility-report.json")
+    artifact_manifest = _read_optional_json(base / "artifact-manifest.json")
+    reports = {
+        "integrity": _read_optional_json(base / "integrity-report.json"),
+        "normalize": _read_optional_json(base / "normalization-report.json"),
+        "lint": _read_optional_json(base / "lint-report.json"),
+        "syntax": _read_optional_json(base / "syntax-report.json"),
+        "structure": _read_optional_json(base / "codegraph-report.json"),
+        "semantics": _read_optional_json(base / "codebase-memory-report.json"),
+        "retrieval": _read_optional_json(base / "retrieval-report.json"),
+        "vector": _read_optional_json(base / "vector-report.json"),
+        "audit": audit_report,
+    }
+    return {
+        "run_id": run["run_id"],
+        "source_id": run.get("source_id"),
+        "commit_sha": run.get("commit_sha"),
+        "status": run.get("status"),
+        "wiki_state": run.get("wiki_state"),
+        "wiki_job_id": run.get("wiki_job_id"),
+        "reports": reports,
+        "artifact_manifest": artifact_manifest,
+        "reproducibility": reproducibility,
+        "quality_gate": audit_report.get("failed_checks", []) if audit_report else [],
+    }
+
+
+def _evidence_bundle(run: dict[str, Any]) -> dict[str, Any]:
+    base = _run_base(run)
+    return {
+        "run_id": run["run_id"],
+        "source_id": run.get("source_id"),
+        "commit_sha": run.get("commit_sha"),
+        "snapshot_path": run.get("snapshot_path"),
+        "reports": {
+            name: str(base / filename)
+            for name, filename in {
+                "integrity": "integrity-report.json",
+                "normalize": "normalization-report.json",
+                "lint": "lint-report.json",
+                "syntax": "syntax-report.json",
+                "structure": "codegraph-report.json",
+                "semantics": "codebase-memory-report.json",
+                "retrieval": "retrieval-report.json",
+                "vector": "vector-report.json",
+                "audit": "audit-report.json",
+                "reproducibility": "reproducibility-report.json",
+                "artifact_manifest": "artifact-manifest.json",
+            }.items()
+            if (base / filename).exists()
+        },
+        "wiki_state": run.get("wiki_state"),
+        "wiki_job_id": run.get("wiki_job_id"),
+        "wiki_manifest_path": run.get("wiki_manifest_path"),
+        "wiki_evidence_path": run.get("wiki_evidence_path"),
+        "wiki_page_manifest_path": run.get("wiki_page_manifest_path"),
+    }
+
+
+def _require_wiki_ready(run: dict[str, Any]) -> None:
+    if run.get("status") != "ready_for_wiki":
+        raise HTTPException(status_code=409, detail="Run is not ready_for_wiki")
 
 
 @app.get("/runs/{run_id}/reports/{stage}", dependencies=[Depends(authenticate)])
@@ -130,6 +226,93 @@ def verify_run_route(run_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="Run not found")
     report = verify_run(run)
     return report
+
+
+@app.get("/runs/{run_id}/wiki/manifest", dependencies=[Depends(authenticate)])
+def get_deterministic_run_manifest(run_id: str) -> dict[str, Any]:
+    run = get_run(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    return _deterministic_manifest(run)
+
+
+@app.get("/runs/{run_id}/wiki/evidence", dependencies=[Depends(authenticate)])
+def get_evidence_bundle(run_id: str) -> dict[str, Any]:
+    run = get_run(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    return _evidence_bundle(run)
+
+
+@app.post("/runs/{run_id}/wiki/started", dependencies=[Depends(authenticate)])
+def report_wiki_job_started(run_id: str, request: WikiJobRequest) -> dict[str, Any]:
+    run = get_run(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    _require_wiki_ready(run)
+    update_run(run_id, wiki_state="wiki_running", wiki_job_id=request.job_id, wiki_started_at=utc_now(), wiki_error=None)
+    return {"run_id": run_id, "wiki_state": "wiki_running", "job_id": request.job_id}
+
+
+@app.post("/runs/{run_id}/wiki/completed", dependencies=[Depends(authenticate)])
+def report_wiki_job_completed(run_id: str, request: WikiJobRequest) -> dict[str, Any]:
+    run = get_run(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    if run.get("wiki_state") not in {"wiki_running", "wiki_generated"}:
+        raise HTTPException(status_code=409, detail="Wiki job has not started")
+    update_run(run_id, wiki_state="wiki_generated", wiki_job_id=request.job_id, wiki_completed_at=utc_now(), wiki_error=None)
+    return {"run_id": run_id, "wiki_state": "wiki_generated", "job_id": request.job_id}
+
+
+@app.post("/runs/{run_id}/wiki/failed", dependencies=[Depends(authenticate)])
+def report_wiki_job_failed(run_id: str, request: WikiFailureRequest) -> dict[str, Any]:
+    run = get_run(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    if run.get("wiki_state") not in {"wiki_running", "wiki_generated"}:
+        raise HTTPException(status_code=409, detail="Wiki job has not started")
+    update_run(run_id, wiki_state="wiki_validation_failed", wiki_job_id=request.job_id, wiki_failed_at=utc_now(), wiki_error=request.error)
+    return {"run_id": run_id, "wiki_state": "wiki_validation_failed", "job_id": request.job_id, "error": request.error}
+
+
+@app.post("/runs/{run_id}/wiki/page-manifest", dependencies=[Depends(authenticate)])
+def submit_generated_page_manifest(run_id: str, request: WikiPageManifestRequest) -> dict[str, Any]:
+    run = get_run(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    if run.get("wiki_state") not in {"wiki_generated", "wiki_running"}:
+        raise HTTPException(status_code=409, detail="Wiki job has not produced pages")
+    wiki_cfg = get_config().get("wiki", {})
+    candidate_path = Path(str(wiki_cfg.get("candidate_path", "/vault/wiki/candidates")))
+    candidate_path.mkdir(parents=True, exist_ok=True)
+    for page in request.pages:
+        page_path = page.get("path")
+        if page_path:
+            resolved = Path(str(page_path)).resolve()
+            if candidate_path.resolve() not in resolved.parents and resolved != candidate_path.resolve():
+                update_run(run_id, wiki_state="wiki_validation_failed", wiki_error="page manifest must stay under candidate_path")
+                raise HTTPException(status_code=400, detail="Page manifest must stay under candidate_path")
+    manifest_path = candidate_path / f"{run_id}.page-manifest.json"
+    manifest = {
+        "run_id": run_id,
+        "source_id": run.get("source_id"),
+        "commit_sha": run.get("commit_sha"),
+        "wiki_state": "ready_for_review",
+        "job_id": request.job_id,
+        "pages": request.pages,
+        "manifest_name": request.manifest_name or manifest_path.name,
+    }
+    write_json(manifest_path, manifest)
+    update_run(
+        run_id,
+        wiki_state="ready_for_review",
+        wiki_job_id=request.job_id,
+        wiki_page_manifest_path=str(manifest_path),
+        wiki_manifest_path=str(manifest_path),
+        wiki_error=None,
+    )
+    return {"run_id": run_id, "wiki_state": "ready_for_review", "manifest_path": str(manifest_path), "page_count": len(request.pages)}
 
 
 @app.post("/search", dependencies=[Depends(authenticate)])

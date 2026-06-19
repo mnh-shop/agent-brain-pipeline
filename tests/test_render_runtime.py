@@ -20,6 +20,8 @@ def test_example_structure_has_expected_profiles():
     assert cfg["stages"]["structure"]["owner_profile"] == "structure-analyst"
     assert cfg["stages"]["semantics"]["owner_profile"] == "semantic-analyst"
     assert cfg["stages"]["vector"]["owner_profile"] == "retrieval-manager"
+    assert cfg["profiles"]["knowledge-writer"]["enabled"] is True
+    assert cfg["wiki"]["enabled"] is True
 
 
 def test_validation_rejects_placeholders():
@@ -69,5 +71,19 @@ def test_render_writes_key_pool_and_fallbacks(tmp_path):
     assert pipeline_cfg["lint"]["fail_severities"] == ["error", "fatal"]
     assert pipeline_cfg["embeddings"]["provider"] == "local"
     assert pipeline_cfg["lancedb"]["table"] == "units"
+    assert pipeline_cfg["wiki"]["raw_path"] == "/vault/raw"
     assert pipeline_cfg["scm"]["github_token"] == ""
     assert (work / ".runtime" / "pipeline.yaml").stat().st_mode & 0o777 == 0o600
+
+    knowledge_writer_env = (work / ".runtime" / "hermes" / "profiles" / "knowledge-writer" / ".env").read_text()
+    assert "WIKI_PATH=/vault/wiki" in knowledge_writer_env
+    assert "OBSIDIAN_VAULT_PATH=/vault" in knowledge_writer_env
+    assert (work / ".runtime" / "hermes" / "profiles" / "knowledge-writer" / "skills" / "llm-wiki" / "SKILL.md").exists()
+    assert (work / ".runtime" / "hermes" / "profiles" / "knowledge-writer" / "skills" / "obsidian" / "SKILL.md").exists()
+
+
+def test_compose_mounts_vault_for_hermes():
+    root = Path(__file__).parents[1]
+    compose = (root / "compose.yaml").read_text()
+    assert ":/vault" in compose
+    assert "OBSIDIAN_VAULT_PATH: /vault" in compose
