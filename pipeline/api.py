@@ -14,7 +14,7 @@ from pipeline.config import get_config
 from pipeline.db import create_run, get_run, initialize, list_runs, update_run
 from pipeline.maintenance import scheduler_loop
 from pipeline.runner import worker_loop
-from pipeline.search import exact_search, fts_search, hybrid_search, semantic_search, structural_search
+from pipeline.search import exact_search, fts_search, hybrid_search, semantic_search, structural_search, vector_search
 from pipeline.urls import parse_repository_url
 from pipeline.util import read_json
 
@@ -46,8 +46,9 @@ class RunRequest(BaseModel):
 
 class SearchRequest(BaseModel):
     query: str = Field(min_length=1)
-    mode: Literal["exact", "fts", "structural", "semantic", "hybrid"] = "hybrid"
+    mode: Literal["exact", "fts", "vector", "structural", "semantic", "hybrid"] = "hybrid"
     source_id: str | None = None
+    commit_sha: str | None = None
     limit: int = Field(default=10, ge=1, le=50)
 
 
@@ -115,14 +116,16 @@ def retry_run(run_id: str) -> dict[str, Any]:
 def search(request: SearchRequest) -> Any:
     try:
         if request.mode == "exact":
-            return exact_search(request.query, request.source_id, request.limit)
+            return exact_search(request.query, request.source_id, request.limit, request.commit_sha)
         if request.mode == "fts":
-            return fts_search(request.query, request.source_id, request.limit)
+            return fts_search(request.query, request.source_id, request.limit, request.commit_sha)
+        if request.mode == "vector":
+            return vector_search(request.query, request.source_id, request.limit, request.commit_sha)
         if request.mode == "structural":
-            return structural_search(request.query, request.source_id, request.limit)
+            return structural_search(request.query, request.source_id, request.limit, request.commit_sha)
         if request.mode == "semantic":
-            return semantic_search(request.query, request.source_id, request.limit)
-        return hybrid_search(request.query, request.source_id, request.limit)
+            return semantic_search(request.query, request.source_id, request.limit, request.commit_sha)
+        return hybrid_search(request.query, request.source_id, request.limit, request.commit_sha)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 

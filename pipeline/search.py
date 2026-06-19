@@ -10,13 +10,38 @@ from pipeline.db import connect, get_run
 from pipeline.util import component_dir, read_json, run_command
 
 
-def _latest_runs(source_id: str | None) -> list[dict[str, Any]]:
+def _latest_completed_runs(source_id: str | None, commit_sha: str | None = None) -> list[dict[str, Any]]:
     max_sources = int(get_config().get("pipeline", {}).get("max_global_search_sources", 8))
     with connect() as connection:
-        if source_id:
+        if source_id and commit_sha:
+            rows = connection.execute(
+                """
+                SELECT run_id FROM runs
+                WHERE source_id=? AND commit_sha=? AND status='completed'
+                ORDER BY completed_at DESC
+                LIMIT 1
+                """,
+                (source_id, commit_sha),
+            ).fetchall()
+        elif source_id:
             rows = connection.execute(
                 "SELECT run_id FROM runs WHERE source_id=? AND status='completed' ORDER BY completed_at DESC LIMIT 1",
                 (source_id,),
+            ).fetchall()
+        elif commit_sha:
+            rows = connection.execute(
+                """
+                SELECT run_id FROM (
+                  SELECT run_id, source_id, completed_at,
+                         ROW_NUMBER() OVER (PARTITION BY source_id ORDER BY completed_at DESC) AS row_number
+                  FROM runs
+                  WHERE status='completed' AND source_id IS NOT NULL AND commit_sha=?
+                )
+                WHERE row_number=1
+                ORDER BY completed_at DESC
+                LIMIT ?
+                """,
+                (commit_sha, max_sources),
             ).fetchall()
         else:
             rows = connection.execute(
@@ -72,8 +97,8 @@ def fts_search_for_run(query: str, run_id: str, limit: int = 10) -> list[dict[st
     return _fts_rows(query, [run_id], limit)
 
 
-def fts_search(query: str, source_id: str | None = None, limit: int = 10) -> list[dict[str, Any]]:
-    return _fts_rows(query, [run["run_id"] for run in _latest_runs(source_id)], limit)
+def fts_search(query: str, source_id: str | None = None, limit: int = 10, commit_sha: str | None = None) -> list[dict[str, Any]]:
+    return _fts_rows(query, [run["run_id"] for run in _latest_completed_runs(source_id, commit_sha)], limit)
 
 
 def _exact_for_run(query: str, run: dict[str, Any], limit: int) -> list[dict[str, Any]]:
@@ -115,9 +140,9 @@ def exact_search_for_run(query: str, run: dict[str, Any], limit: int = 20) -> li
     return _exact_for_run(query, run, limit)
 
 
-def exact_search(query: str, source_id: str | None = None, limit: int = 20) -> list[dict[str, Any]]:
+def exact_search(query: str, source_id: str | None = None, limit: int = 20, commit_sha: str | None = None) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
-    for run in _latest_runs(source_id):
+    for run in _latest_completed_runs(source_id, commit_sha):
         remaining = max(1, limit - len(items))
         items.extend(_exact_for_run(query, run, remaining))
         if len(items) >= limit:
@@ -125,10 +150,10 @@ def exact_search(query: str, source_id: str | None = None, limit: int = 20) -> l
     return items[:limit]
 
 
-def structural_search(query: str, source_id: str | None = None, limit: int = 10) -> list[dict[str, Any]]:
+def structural_search(query: str, source_id: str | None = None, limit: int = 10, commit_sha: str | None = None) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     command = str(get_config().get("codegraph", {}).get("command", "codegraphcontext"))
-    for run in _latest_runs(source_id)[:limit]:
+    for run in _latest_completed_runs(source_id, commit_sha)[:limit]:
         derived = component_dir(run, "codegraph")
         env = {"HOME": str(derived / "home"), "XDG_CACHE_HOME": str(derived / "cache"), "XDG_CONFIG_HOME": str(derived / "config")}
         result = run_command([command, "find", "pattern", query], env=env, check=False, timeout=180)
@@ -145,10 +170,10 @@ def structural_search(query: str, source_id: str | None = None, limit: int = 10)
     return items
 
 
-def semantic_search(query: str, source_id: str | None = None, limit: int = 10) -> list[dict[str, Any]]:
+def semantic_search(query: str, source_id: str | None = None, limit: int = 10, commit_sha: str | None = None) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     cfg = get_config().get("codebase_memory", {})
-    for run in _latest_runs(source_id)[:limit]:
+    for run in _latest_completed_runs(source_id, commit_sha)[:limit]:
         derived = component_dir(run, "codebase-memory")
         env = {"CBM_CACHE_DIR": str(derived), "CBM_WORKERS": str(cfg.get("workers", 4)), "CBM_LOG_LEVEL": "error"}
         semantic_report = Path(run["snapshot_path"]).parent / "codebase-memory-report.json"
@@ -176,12 +201,41 @@ def semantic_search(query: str, source_id: str | None = None, limit: int = 10) -
     return items
 
 
-def hybrid_search(query: str, source_id: str | None = None, limit: int = 10) -> dict[str, Any]:
+def vector_search(query: str, source_id: str | None = None, limit: int = 10, commit_sha: str | None = None) -> list[dict[str, Any]]:
+    from pipeline.embeddings import LocalDeterministicEmbeddingBackend
+    from pipeline.indexes import LanceDBIndex
+
+    cfg = get_config()
+    section = cfg.get("lancedb", {})
+    embeddings_cfg = cfg.get("embeddings", {})
+    backend = LocalDeterministicEmbeddingBackend(
+        model=str(embeddings_cfg.get("model", "agent-brain-local-hash-embedding")),
+        revision=str(embeddings_cfg.get("revision", "v1")),
+        dimensions=int(embeddings_cfg.get("dimensions", 384)),
+        normalize=bool(embeddings_cfg.get("normalize", True)),
+    )
+    index = LanceDBIndex(
+        path=Path(section.get("path", "/data/indexes/lancedb")),
+        table_name=str(section.get("table", "units")),
+        metric=str(section.get("metric", "cosine")),
+    )
+    items: list[dict[str, Any]] = []
+    for run in _latest_completed_runs(source_id, commit_sha)[:limit]:
+        filters = {"source_id": run["source_id"], "commit_sha": run["commit_sha"]}
+        results = index.search(backend.embed([query])[0], limit=limit, filters=filters)
+        for row in results:
+            items.append(dict(row) | {"method": "vector"})
+    items.sort(key=lambda item: float(item.get("score", 0.0)), reverse=True)
+    return items[:limit]
+
+
+def hybrid_search(query: str, source_id: str | None = None, limit: int = 10, commit_sha: str | None = None) -> dict[str, Any]:
     return {
         "query": query,
         "source_id": source_id,
-        "fts": fts_search(query, source_id, limit),
-        "exact": exact_search(query, source_id, limit),
-        "structural": structural_search(query, source_id, limit),
-        "semantic": semantic_search(query, source_id, limit),
+        "fts": fts_search(query, source_id, limit, commit_sha),
+        "exact": exact_search(query, source_id, limit, commit_sha),
+        "vector": vector_search(query, source_id, limit, commit_sha),
+        "structural": structural_search(query, source_id, limit, commit_sha),
+        "semantic": semantic_search(query, source_id, limit, commit_sha),
     }

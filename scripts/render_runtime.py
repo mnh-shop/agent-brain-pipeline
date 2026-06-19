@@ -221,7 +221,7 @@ def render(cfg: dict[str, Any], repo_root: Path) -> None:
     # subset it needs. The pipeline never receives Telegram or LLM credentials.
     pipeline_keys = (
         "version", "general", "security", "scm", "stages", "maintenance",
-        "pipeline", "lint", "syntax", "codegraph", "codebase_memory", "storage", "api", "logging",
+        "pipeline", "lint", "syntax", "codegraph", "codebase_memory", "embeddings", "lancedb", "storage", "api", "logging",
     )
     pipeline_cfg = {key: cfg[key] for key in pipeline_keys if key in cfg}
     pipeline_config_path = runtime / "pipeline.yaml"

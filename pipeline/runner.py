@@ -8,7 +8,7 @@ from typing import Any, Callable
 
 from pipeline.config import get_config
 from pipeline.db import claim_next_run, get_run, set_stage, update_run
-from pipeline.stages import acquire, audit, curate, export, retrieval, semantics, structure, syntax
+from pipeline.stages import acquire, audit, curate, export, retrieval, semantics, structure, syntax, vector
 from pipeline.util import utc_now, write_json
 
 logger = logging.getLogger(__name__)
@@ -20,6 +20,7 @@ STAGE_FUNCTIONS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
     "structure": structure.run,
     "semantics": semantics.run,
     "retrieval": retrieval.run,
+    "vector": vector.run,
     "audit": audit.run,
     "export": export.run,
 }
@@ -94,6 +95,7 @@ def _report_path(stage: str, run: dict[str, Any], report: dict[str, Any]) -> str
         "structure": "codegraph-report.json",
         "semantics": "codebase-memory-report.json",
         "retrieval": "retrieval-report.json",
+        "vector": "vector-report.json",
         "audit": "audit-report.json",
     }
     filename = mapping.get(stage)

@@ -24,7 +24,7 @@ def run(run: dict[str, Any]) -> dict[str, Any]:
 
     snapshot = Path(run["snapshot_path"])
     reports = {}
-    for name in ("integrity", "normalize", "lint", "syntax", "structure", "semantic", "retrieval", "audit"):
+    for name in ("integrity", "normalize", "lint", "syntax", "structure", "semantic", "vector", "retrieval", "audit"):
         path = snapshot.parent / f"{name}-report.json"
         if path.exists():
             reports[name] = read_json(path)
@@ -60,6 +60,7 @@ status: verified-and-indexed
 - Syntax: {'passed' if reports.get('syntax', {}).get('passed') else 'failed'}
 - CodeGraphContext: {'passed' if reports.get('structure', {}).get('passed') else 'failed'}
 - Codebase-Memory: {'passed' if reports.get('semantic', {}).get('passed') else 'failed'}
+- Vector index: {'passed' if reports.get('vector', {}).get('passed') else 'failed'}
 - Full-text retrieval: {'passed' if reports.get('retrieval', {}).get('passed') else 'failed'}
 - Quality audit: {'passed' if reports.get('audit', {}).get('passed') else 'failed'}
 

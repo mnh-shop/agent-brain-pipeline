@@ -19,6 +19,7 @@ def test_example_structure_has_expected_profiles():
     assert cfg["stages"]["syntax"]["owner_profile"] == "syntax-analyst"
     assert cfg["stages"]["structure"]["owner_profile"] == "structure-analyst"
     assert cfg["stages"]["semantics"]["owner_profile"] == "semantic-analyst"
+    assert cfg["stages"]["vector"]["owner_profile"] == "retrieval-manager"
 
 
 def test_validation_rejects_placeholders():
@@ -66,5 +67,7 @@ def test_render_writes_key_pool_and_fallbacks(tmp_path):
     assert "providers" not in pipeline_cfg
     assert pipeline_cfg["syntax"]["max_symbol_bytes"] == 262144
     assert pipeline_cfg["lint"]["fail_severities"] == ["error", "fatal"]
+    assert pipeline_cfg["embeddings"]["provider"] == "local"
+    assert pipeline_cfg["lancedb"]["table"] == "units"
     assert pipeline_cfg["scm"]["github_token"] == ""
     assert (work / ".runtime" / "pipeline.yaml").stat().st_mode & 0o777 == 0o600

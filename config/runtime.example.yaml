@@ -104,7 +104,7 @@ profiles:
 
   retrieval-manager:
     enabled: true
-    description: "Exact, FTS, structural, semantic, and hybrid retrieval"
+    description: "Exact, FTS, vector, structural, semantic, and hybrid retrieval"
     model: null
 
   quality-auditor:
@@ -145,6 +145,9 @@ stages:
     owner_profile: semantic-analyst
     required: true
   retrieval:
+    owner_profile: retrieval-manager
+    required: true
+  vector:
     owner_profile: retrieval-manager
     required: true
   audit:
@@ -203,6 +206,22 @@ codebase_memory:
   mode: "full"
   # Fallback only; the pipeline normally captures the project ID returned by CBM.
   project_name: "repository"
+
+embeddings:
+  enabled: true
+  provider: local
+  model: "agent-brain-local-hash-embedding"
+  revision: "v1"
+  batch_size: 32
+  dimensions: 384
+  normalize: true
+
+lancedb:
+  enabled: true
+  required: true
+  path: "/data/indexes/lancedb"
+  table: units
+  metric: cosine
 
 lint:
   enabled: true

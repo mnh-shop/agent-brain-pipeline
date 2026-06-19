@@ -20,8 +20,9 @@ The orchestrator creates a Kanban task and submits one ingestion run. The determ
 6. **Structure** — run **CodeGraphContext** over the exact snapshot.
 7. **Semantics** — run **Codebase-Memory** in full mode over the exact snapshot and retain its returned project identifier for later queries.
 8. **Retrieval** — build the pipeline's own SQLite FTS5 index and expose exact, full-text, structural, semantic, and hybrid search.
-9. **Audit** — verify that all mandatory artifacts and retrieval methods work.
-10. **Export** — create repository and report notes in the mounted Obsidian vault.
+9. **Vector** — build the pipeline-owned LanceDB index over canonical units for semantic retrieval and history-preserving search.
+10. **Audit** — verify that all mandatory artifacts and retrieval methods work.
+11. **Export** — create repository and report notes in the mounted Obsidian vault.
 
 Stable identifiers are part of the data model:
 
@@ -158,9 +159,13 @@ Uses CodeGraphContext's graph/search CLI. Best for classes, methods, functions, 
 
 Uses Codebase-Memory's bundled semantic query and graph signals. Best for architectural or conceptual questions where the same words may not appear in source.
 
+### Vector search
+
+Uses the pipeline-owned LanceDB index over canonical units. Best for semantic retrieval across documentation and code with deterministic local embeddings.
+
 ### Hybrid search
 
-Runs full-text, structural, and semantic retrieval together and returns one evidence package with repository, commit, file, line, method, and score metadata where available.
+Runs full-text, vector, structural, and semantic retrieval together and returns one evidence package with repository, commit, file, line, method, and score metadata where available.
 
 ## Important storage rule
 

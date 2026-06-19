@@ -25,7 +25,7 @@ def run(run: dict[str, Any]) -> dict[str, Any]:
         "unit_count": unit_count,
         "fts_count": fts_count,
         "smoke_result": dict(smoke) if smoke else None,
-        "methods": ["exact", "fts", "structural", "semantic", "hybrid"],
+        "methods": ["exact", "fts", "vector", "structural", "semantic", "hybrid"],
         "passed": unit_count > 0 and fts_count == unit_count,
     }
     report_path = Path(run["snapshot_path"]).parent / "retrieval-report.json"
