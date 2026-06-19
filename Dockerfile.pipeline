@@ -45,6 +45,7 @@ RUN set -eux; \
 COPY scripts /app/scripts
 COPY profiles /app/profiles
 COPY config/runtime.example.yaml /app/config/runtime.example.yaml
+RUN install -m 0755 /app/scripts/codefetch /usr/local/bin/codefetch
 
 RUN mkdir -p /data /vault
 

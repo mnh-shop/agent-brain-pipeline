@@ -38,3 +38,6 @@ test -f .runtime/compose.env \
   && grep -q '^TELEGRAM_BOT_TOKEN=' .runtime/hermes/.env \
   && grep -q '^OPENROUTER_API_KEY=' .runtime/hermes/.env \
   && echo PASS || echo FAIL
+
+printf '%-28s' 'Isolation:'
+./scripts/verify-container-isolation.sh >/dev/null && echo PASS || echo FAIL

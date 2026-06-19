@@ -1,0 +1,24 @@
+#!/usr/bin/env sh
+set -eu
+
+if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ] || [ "${1:-}" = "help" ]; then
+  cat <<'EOF'
+codefetch - minimal pipeline acquisition helper
+
+Usage:
+  codefetch clone <repository-url> <destination>
+
+This helper is container-installed for pipeline boundary enforcement.
+It uses git clone and does not run on the host.
+EOF
+  exit 0
+fi
+
+if [ "${1:-}" = "clone" ] && [ "$#" -eq 3 ]; then
+  repo_url="$2"
+  destination="$3"
+  exec git clone --mirror "$repo_url" "$destination"
+fi
+
+echo "codefetch: unsupported arguments" >&2
+exit 64

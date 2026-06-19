@@ -254,9 +254,8 @@ storage:
   obsidian_dir: "/vault"
 
   # Paths on the Docker host. Relative paths resolve from this repo.
-  data_host_path: "./.runtime/data"
-  hermes_host_path: "./.runtime/hermes"
-  obsidian_host_path: "../agent-brain"
+  data_host_path: "/Users/admin1/agent-brain/data"
+  obsidian_host_path: "/Users/admin1/agent-brain/vault"
 
 api:
   host: "0.0.0.0"

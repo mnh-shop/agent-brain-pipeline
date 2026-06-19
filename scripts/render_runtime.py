@@ -255,7 +255,6 @@ def render(cfg: dict[str, Any], repo_root: Path) -> None:
         "PIPELINE_PORT": str(cfg["api"]["public_host_port"]),
         "PIPELINE_CONFIG_PATH": str(pipeline_config_path.resolve()),
         "DATA_HOST_PATH": str((repo_root / storage["data_host_path"]).resolve()) if not Path(storage["data_host_path"]).is_absolute() else storage["data_host_path"],
-        "HERMES_HOST_PATH": str((repo_root / storage["hermes_host_path"]).resolve()) if not Path(storage["hermes_host_path"]).is_absolute() else storage["hermes_host_path"],
         "OBSIDIAN_HOST_PATH": str((repo_root / storage["obsidian_host_path"]).resolve()) if not Path(storage["obsidian_host_path"]).is_absolute() else storage["obsidian_host_path"],
         "AGENT_BRAIN_API_TOKEN": cfg["security"]["internal_api_token"],
         "HERMES_TIMEZONE": cfg.get("general", {}).get("timezone", "America/Bogota"),
