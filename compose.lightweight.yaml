@@ -1,0 +1,8 @@
+services:
+  hermes:
+    build:
+      context: .
+      dockerfile: Dockerfile.hermes-lite
+      args:
+        HERMES_REF: ${HERMES_REF:-main}
+    image: ${HERMES_IMAGE:-agent-brain-hermes:lite}
