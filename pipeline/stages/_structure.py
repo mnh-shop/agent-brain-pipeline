@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
-from pipeline.db import make_symbol_id
+from pipeline.db import PIPELINE_VERSION, make_symbol_id
 from pipeline.schemas.ids import normalize_path, stable_hash
 from pipeline.util import read_json, sha256_file, sha256_text, write_json
 
@@ -194,19 +194,25 @@ def normalize_graph(
     symbol_matches: list[dict[str, Any]] = []
     unmatched_nodes: list[dict[str, Any]] = []
     queries: list[dict[str, Any]] = []
+    symbols_by_path: dict[str, list[dict[str, Any]]] = {}
+    symbols_by_path_and_name: dict[tuple[str, str], dict[str, Any]] = {}
 
     for file_row in syntax_files:
         nodes.append(_file_unit_node(file_row))
 
     for symbol in syntax_symbols:
         nodes.append(_symbol_node(symbol))
+        normalized_path = symbol.get("normalized_path") or normalize_path(symbol["path"])
+        symbols_by_path.setdefault(normalized_path, []).append(symbol)
+        qualified_name = symbol.get("qualified_name")
+        if qualified_name:
+            symbols_by_path_and_name[(normalized_path, qualified_name)] = symbol
 
     for file_row in syntax_files:
         file_node_id = stable_hash("file", file_row.get("normalized_path") or normalize_path(file_row["path"]), file_row.get("file_sha256") or file_row.get("sha256") or "")
-        for symbol in syntax_symbols:
-            if normalize_path(symbol["path"]) == normalize_path(file_row["path"]):
-                symbol_node_id = symbol["symbol_id"]
-                edges.append(_edge(file_node_id, symbol_node_id, "CONTAINS", run["source_id"], run["commit_sha"], file_row["path"]))
+        for symbol in symbols_by_path.get(normalize_path(file_row["path"]), []):
+            symbol_node_id = symbol["symbol_id"]
+            edges.append(_edge(file_node_id, symbol_node_id, "CONTAINS", run["source_id"], run["commit_sha"], file_row["path"]))
 
     for symbol in syntax_symbols:
         if symbol["symbol_kind"] in {"class", "function", "method", "constructor", "interface", "enum", "configuration-object", "constant", "module"}:
@@ -236,11 +242,12 @@ def normalize_graph(
         for row in raw_nodes:
             raw_node_id = row.get("node_id") or stable_hash(row.get("label"), row.get("kind"), row.get("path"))
             matched = None
-            for symbol in syntax_symbols:
-                if row.get("normalized_path") and normalize_path(row["normalized_path"]) == normalize_path(symbol["path"]):
-                    if row.get("qualified_name") and row["qualified_name"] == symbol.get("qualified_name"):
-                        matched = symbol["symbol_id"]
-                        break
+            normalized_path = normalize_path(row["normalized_path"]) if row.get("normalized_path") else ""
+            qualified_name = row.get("qualified_name")
+            if normalized_path and qualified_name:
+                symbol = symbols_by_path_and_name.get((normalized_path, qualified_name))
+                if symbol:
+                    matched = symbol["symbol_id"]
             if matched:
                 symbol_matches.append({**row, "matched": True, "matched_symbol_id": matched, "reason": "raw-node-matched"})
             else:
@@ -273,7 +280,7 @@ def normalize_graph(
 
     manifest = {
         "schema_version": 1,
-        "pipeline_version": run["pipeline_version"],
+        "pipeline_version": run.get("pipeline_version") or PIPELINE_VERSION,
         "codegraph_version": probe.version,
         "executable": probe.executable,
         "executable_hash": probe.executable_hash,
@@ -292,4 +299,3 @@ def normalize_graph(
     _jsonl_write(normalized_dir / "queries.jsonl", queries)
     write_json(normalized_dir / "manifest.json", manifest)
     return manifest
-

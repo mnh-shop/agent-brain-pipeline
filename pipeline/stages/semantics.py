@@ -6,8 +6,8 @@ from pathlib import Path
 from typing import Any
 
 from pipeline.config import get_config
-from pipeline.db import PIPELINE_VERSION, record_stage_report, record_tool_execution
-from pipeline.stages._semantics import ToolProbe, normalize_semantic_outputs, parse_projects_output, probe_tool, _json_output, _project_from_index
+from pipeline.db import PIPELINE_VERSION, record_stage_report
+from pipeline.stages._semantics import normalize_semantic_outputs, parse_projects_output, probe_tool, _json_output, _project_from_index
 from pipeline.util import component_dir, ensure_analysis_workspace, run_command, sha256_file, write_json
 
 
@@ -65,8 +65,21 @@ def run(run: dict[str, Any]) -> dict[str, Any]:
     graph_smoke = run_command([command, "cli", "search_graph", json.dumps({"project": project, "limit": 3})], env=env, timeout=timeout, check=False)
     graph_stdout_path, graph_stderr_path = _capture_result("graph_smoke", graph_smoke, raw_dir)
 
-    semantic_smoke = run_command([command, "cli", "semantic_query", json.dumps({"project": project, "query": "repository architecture", "limit": 3})], env=env, timeout=timeout, check=False)
-    semantic_stdout_path, semantic_stderr_path = _capture_result("semantic_smoke", semantic_smoke, raw_dir)
+    semantic_payload = {"project": project, "query": "repository architecture", "limit": 3}
+    semantic_command = [command, "cli", "semantic_query", json.dumps(semantic_payload)]
+    semantic_query_supported = "semantic_query" in probe.supported_commands
+    semantic_smoke = None
+    if semantic_query_supported:
+        semantic_smoke = run_command(semantic_command, env=env, timeout=timeout, check=False)
+        if semantic_smoke.returncode != 0 and "unknown tool: semantic_query" in semantic_smoke.stderr.lower():
+            semantic_query_supported = False
+    if semantic_smoke is not None:
+        semantic_stdout_path, semantic_stderr_path = _capture_result("semantic_smoke", semantic_smoke, raw_dir)
+    else:
+        semantic_stdout_path = raw_dir / "semantic_smoke.stdout.txt"
+        semantic_stderr_path = raw_dir / "semantic_smoke.stderr.txt"
+        _write_text(semantic_stdout_path, "")
+        _write_text(semantic_stderr_path, "semantic_query unsupported by installed codebase-memory-mcp; skipped\n")
 
     artifact = analysis_path / ".codebase-memory" / "graph.db.zst"
     if artifact.exists():
@@ -81,11 +94,17 @@ def run(run: dict[str, Any]) -> dict[str, Any]:
         projects_output=_json_output(list_result.stdout),
         architecture_output=_json_output(architecture_result.stdout),
         graph_output=_json_output(graph_smoke.stdout),
-        semantic_output=_json_output(semantic_smoke.stdout),
+        semantic_output=_json_output(semantic_smoke.stdout) if semantic_smoke is not None else None,
         probe=probe,
         command_results={
             "index": {"index_mode": index_payload["mode"], "workers": int(section.get("workers", 4)), "cache_dir": str(derived)},
             "list_projects": {"path": str(list_stdout_path)},
+            "graph_search": {"returncode": graph_smoke.returncode},
+            "semantic_query": {
+                "supported": semantic_query_supported,
+                "invoked": semantic_smoke is not None,
+                "returncode": semantic_smoke.returncode if semantic_smoke is not None else None,
+            },
         },
     )
 
@@ -96,12 +115,13 @@ def run(run: dict[str, Any]) -> dict[str, Any]:
         for key in ("project", "project_id", "project_name", "name")
     )
     graph_artifact_ok = artifact.exists() and artifact.stat().st_size > 0
+    semantic_command_ok = (not semantic_query_supported) or (semantic_smoke is not None and semantic_smoke.returncode == 0)
     passed = bool(
         index_result.returncode == 0
         and list_result.returncode == 0
         and architecture_result.returncode == 0
         and graph_smoke.returncode == 0
-        and semantic_smoke.returncode == 0
+        and semantic_command_ok
         and projects_found
         and graph_artifact_ok
         and normalized["manifest"]["passed"]
@@ -119,9 +139,10 @@ def run(run: dict[str, Any]) -> dict[str, Any]:
             "list_projects": [command, "cli", "list_projects"],
             "get_architecture": [command, "cli", "get_architecture", json.dumps({"project": project})],
             "search_graph": [command, "cli", "search_graph", json.dumps({"project": project, "limit": 3})],
-            "semantic_query": [command, "cli", "semantic_query", json.dumps({"project": project, "query": "repository architecture", "limit": 3})],
+            "semantic_query": semantic_command,
         },
         "supports": probe.supported_commands,
+        "semantic_query_supported": semantic_query_supported,
     }
     write_json(raw_dir / "manifest.json", raw_manifest)
     write_json(normalized_dir / "manifest.json", normalized["manifest"])
@@ -169,15 +190,16 @@ def run(run: dict[str, Any]) -> dict[str, Any]:
         "artifact_sha256": sha256_file(artifact) if artifact.exists() else None,
         "projects": projects,
         "project_in_projects": projects_found,
+        "semantic_query_supported": semantic_query_supported,
         "architecture": _json_output(architecture_result.stdout),
         "graph_smoke": _json_output(graph_smoke.stdout),
-        "semantic_smoke": _json_output(semantic_smoke.stdout),
+        "semantic_smoke": _json_output(semantic_smoke.stdout) if semantic_smoke is not None else None,
         "returncodes": {
             "index_repository": index_result.returncode,
             "list_projects": list_result.returncode,
             "get_architecture": architecture_result.returncode,
             "search_graph": graph_smoke.returncode,
-            "semantic_query": semantic_smoke.returncode,
+            "semantic_query": semantic_smoke.returncode if semantic_smoke is not None else None,
         },
         "command_artifacts": {
             "index_repository": {"stdout": str(index_stdout_path), "stderr": str(index_stderr_path)},
@@ -219,7 +241,13 @@ def run(run: dict[str, Any]) -> dict[str, Any]:
         "passed": passed,
         "summary": {"project": project},
         "metrics": report,
-        "warnings": [] if passed else ["Semantic normalization produced validation failures"],
+        "warnings": (
+            []
+            if passed and semantic_query_supported
+            else ["semantic_query unsupported by installed codebase-memory-mcp; graph-only semantics validation used"]
+            if passed
+            else ["Semantic normalization produced validation failures"]
+        ),
         "errors": [] if passed else [{"stage": "semantic", "returncodes": report["returncodes"]}],
         "schema_version": 1,
         "pipeline_version": PIPELINE_VERSION,
@@ -227,4 +255,3 @@ def run(run: dict[str, Any]) -> dict[str, Any]:
     if not passed and section.get("required", True):
         raise RuntimeError(f"Codebase-Memory stage failed; see {report_path}")
     return report
-

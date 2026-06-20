@@ -8,13 +8,29 @@ from typing import Any, Callable
 
 from pipeline.config import get_config
 from pipeline.db import claim_next_run, get_run, set_stage, update_run
-from pipeline.stages import acquire, audit, curate, export, retrieval, semantics, structure, syntax, vector
+from pipeline.stages import (
+    acquire,
+    audit,
+    curate,
+    export,
+    integrity,
+    lint,
+    normalize,
+    retrieval,
+    semantics,
+    structure,
+    syntax,
+    vector,
+)
 from pipeline.util import utc_now, write_json
 
 logger = logging.getLogger(__name__)
 
 STAGE_FUNCTIONS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
     "acquire": acquire.run,
+    "integrity": integrity.run,
+    "normalize": normalize.run,
+    "lint": lint.run,
     "curate": curate.run,
     "syntax": syntax.run,
     "structure": structure.run,
@@ -49,8 +65,11 @@ def execute_run(run_id: str) -> None:
             run = get_run(run_id)
             if not run:
                 raise RuntimeError(f"Run not found: {run_id}")
+            existing_stage = next((item for item in run.get("stages", []) if item.get("stage") == stage), None)
+            if existing_stage and existing_stage.get("status") == "passed":
+                continue
             owner = stage_cfg["owner_profile"]
-            update_run(run_id, current_stage=stage)
+            update_run(run_id, status="running", current_stage=stage, error=None, completed_at=None)
             set_stage(run_id, stage, owner, "running")
             try:
                 report = STAGE_FUNCTIONS[stage](run)
@@ -59,7 +78,7 @@ def execute_run(run_id: str) -> None:
             except Exception as exc:
                 error = f"{type(exc).__name__}: {exc}"
                 set_stage(run_id, stage, owner, "failed", error=error)
-                update_run(run_id, status="failed", error=error)
+                update_run(run_id, status="failed", current_stage=stage, error=error)
                 try:
                     export.refresh_kanban()
                 except Exception:
@@ -90,6 +109,9 @@ def _report_path(stage: str, run: dict[str, Any], report: dict[str, Any]) -> str
     if not snapshot:
         return None
     mapping = {
+        "integrity": "integrity-report.json",
+        "normalize": "normalization-report.json",
+        "lint": "lint-report.json",
         "curate": "curate-report.json",
         "syntax": "syntax-report.json",
         "structure": "codegraph-report.json",

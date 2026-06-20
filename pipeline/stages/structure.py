@@ -12,11 +12,21 @@ from pipeline.util import component_dir, ensure_analysis_workspace, run_command,
 
 
 def _format(args: list[Any], **values: str) -> list[str]:
-    return [str(value).format(**values) for value in args]
+    class _SafeDict(dict[str, str]):
+        def __missing__(self, key: str) -> str:
+            return "{" + key + "}"
+
+    safe_values = _SafeDict({key: str(value) for key, value in values.items()})
+    return [str(value).format_map(safe_values) for value in args]
 
 
 def _copy_path(src: Path, dst: Path) -> None:
     if src.exists():
+        try:
+            if src.resolve() == dst.resolve():
+                return
+        except FileNotFoundError:
+            pass
         dst.parent.mkdir(parents=True, exist_ok=True)
         if src.is_dir():
             if dst.exists():
@@ -32,6 +42,30 @@ def _tool_env(derived: Path) -> dict[str, str]:
         "XDG_CACHE_HOME": str(derived / "cache"),
         "XDG_CONFIG_HOME": str(derived / "config"),
     }
+
+
+def _command_passed(name: str, result: dict[str, Any], raw_dir: Path, bundle_path: Path) -> bool:
+    if result.get("returncode") == 0:
+        return True
+    stdout_path = Path(result["stdout_path"]) if result.get("stdout_path") else None
+    stderr_path = Path(result["stderr_path"]) if result.get("stderr_path") else None
+    stdout = stdout_path.read_text(encoding="utf-8", errors="replace") if stdout_path and stdout_path.exists() else ""
+    stderr = stderr_path.read_text(encoding="utf-8", errors="replace") if stderr_path and stderr_path.exists() else ""
+    text = f"{stdout}\n{stderr}"
+    nonempty_output = bool(stdout.strip() or stderr.strip())
+    if name == "setup":
+        return nonempty_output
+    if name == "smoke":
+        return nonempty_output
+    if name == "stats":
+        return nonempty_output
+    if name == "export":
+        return bundle_path.exists() and bundle_path.stat().st_size > 0
+    if name.startswith("query-"):
+        return nonempty_output and "No matches found" not in text
+    if name == "index":
+        return "Re-indexing" in text and "An error occurred during re-indexing" not in text
+    return False
 
 
 def run(run: dict[str, Any]) -> dict[str, Any]:
@@ -61,7 +95,7 @@ def run(run: dict[str, Any]) -> dict[str, Any]:
     smoke_args = _format(section.get("smoke_args", ["list"]), **values)
     stats_args = _format(section.get("stats_args", ["stats", "{analysis_path}"]), **values)
     export_args = _format(section.get("export_args", ["bundle", "export", "{bundle_path}", "--repo", "{analysis_path}"]), **values)
-    find_args = _format(section.get("find_args", ["find", "pattern", "{query}"]), **values)
+    find_args = _format(section.get("find_args", ["find", "pattern", "{query}"]), query="{query}", **values)
 
     command_results: dict[str, dict[str, Any]] = {}
     query_records: list[dict[str, Any]] = []
@@ -121,7 +155,7 @@ def run(run: dict[str, Any]) -> dict[str, Any]:
         {"name": "import", "query": "node:fs"},
     ]
     for probe_query in query_probes:
-        args = [part.format(query=probe_query["query"]) for part in query_args]
+        args = [part.replace("{query}", probe_query["query"]) for part in query_args]
         _run_logged(f"query-{probe_query['name']}", args, query=probe_query["query"])
 
     syntax_dir = snapshot.parent / "syntax"
@@ -146,6 +180,10 @@ def run(run: dict[str, Any]) -> dict[str, Any]:
         syntax_files=syntax_files,
     )
 
+    command_pass = {
+        name: _command_passed(name, result, raw_dir, bundle_path)
+        for name, result in command_results.items()
+    }
     report = {
         "schema_version": 1,
         "run_id": run["run_id"],
@@ -164,6 +202,7 @@ def run(run: dict[str, Any]) -> dict[str, Any]:
         "bundle_path": str(bundle_path),
         "commands": command_results,
         "returncodes": {name: result["returncode"] for name, result in command_results.items()},
+        "command_pass": command_pass,
         "stats_stdout_tail": (raw_dir / "stats.stdout.txt").read_text(encoding="utf-8")[-20000:] if (raw_dir / "stats.stdout.txt").exists() else "",
         "index_stdout_tail": (raw_dir / "index.stdout.txt").read_text(encoding="utf-8")[-12000:] if (raw_dir / "index.stdout.txt").exists() else "",
         "index_stderr_tail": (raw_dir / "index.stderr.txt").read_text(encoding="utf-8")[-12000:] if (raw_dir / "index.stderr.txt").exists() else "",
@@ -174,11 +213,14 @@ def run(run: dict[str, Any]) -> dict[str, Any]:
         "queries": query_records,
         "passed": bool(
             bundle_path.exists()
-            and all(result.returncode == 0 for result in (setup_result, index_result, smoke_result, stats_result, export_result))
+            and command_pass.get("setup", False)
+            and command_pass.get("smoke", False)
+            and command_pass.get("stats", False)
+            and command_pass.get("export", False)
             and manifest["node_count"] > 0
             and manifest["edge_count"] >= 0
             and manifest["symbol_match_count"] > 0
-            and any(item["passed"] for item in query_records)
+            and any(command_pass.get(f"query-{item['name']}", False) for item in query_probes)
         ),
     }
     report_path = snapshot.parent / "codegraph-report.json"

@@ -14,6 +14,37 @@ def _safe_note(value: str) -> str:
     return value.replace("/", " - ").replace("\\", " - ")
 
 
+def _load_reports(snapshot: Path) -> dict[str, Any]:
+    report_files = {
+        "integrity": ("integrity-report.json",),
+        "normalize": ("normalization-report.json", "normalize-report.json"),
+        "lint": ("lint-report.json",),
+        "curate": ("curate-report.json",),
+        "syntax": ("syntax-report.json",),
+        "structure": ("codegraph-report.json", "structure-report.json"),
+        "semantics": ("codebase-memory-report.json", "semantic-report.json"),
+        "retrieval": ("retrieval-report.json",),
+        "vector": ("vector-report.json",),
+        "audit": ("audit-report.json",),
+    }
+    reports: dict[str, Any] = {}
+    for name, candidates in report_files.items():
+        for filename in candidates:
+            path = snapshot.parent / filename
+            if path.exists():
+                reports[name] = read_json(path)
+                break
+    curate = reports.get("curate")
+    if isinstance(curate, dict):
+        if "integrity" not in reports and isinstance(curate.get("integrity"), dict):
+            reports["integrity"] = curate["integrity"]
+        if "normalize" not in reports and isinstance(curate.get("normalization"), dict):
+            reports["normalize"] = curate["normalization"]
+        if "lint" not in reports and isinstance(curate.get("lint"), dict):
+            reports["lint"] = curate["lint"]
+    return reports
+
+
 def run(run: dict[str, Any]) -> dict[str, Any]:
     vault = obsidian_dir()
     repo = parse_repository_url(run["repository_url"])
@@ -23,13 +54,7 @@ def run(run: dict[str, Any]) -> dict[str, Any]:
     report_dir.mkdir(parents=True, exist_ok=True)
 
     snapshot = Path(run["snapshot_path"])
-    reports = {}
-    for name in ("integrity", "normalize", "lint", "syntax", "structure", "semantic", "vector", "retrieval", "audit"):
-        path = snapshot.parent / f"{name}-report.json"
-        if path.exists():
-            reports[name] = read_json(path)
-    if "structure" not in reports and (snapshot.parent / "codegraph-report.json").exists():
-        reports["structure"] = read_json(snapshot.parent / "codegraph-report.json")
+    reports = _load_reports(snapshot)
 
     title = f"{repo.namespace} - {repo.name}"
     source_note = source_dir / f"{_safe_note(title)}.md"
@@ -61,7 +86,7 @@ wiki_state: {wiki_state}
 - Lint: {'passed' if reports.get('lint', {}).get('passed') else 'failed'}
 - Syntax: {'passed' if reports.get('syntax', {}).get('passed') else 'failed'}
 - CodeGraphContext: {'passed' if reports.get('structure', {}).get('passed') else 'failed'}
-- Codebase-Memory: {'passed' if reports.get('semantic', {}).get('passed') else 'failed'}
+- Codebase-Memory: {'passed' if reports.get('semantics', {}).get('passed') else 'failed'}
 - Vector index: {'passed' if reports.get('vector', {}).get('passed') else 'failed'}
 - Full-text retrieval: {'passed' if reports.get('retrieval', {}).get('passed') else 'failed'}
 - Quality audit: {'passed' if reports.get('audit', {}).get('passed') else 'failed'}
@@ -69,8 +94,8 @@ wiki_state: {wiki_state}
 
 ## Counts
 
-- Files: {reports.get('normalize', {}).get('file_count', 0)}
-- Searchable units: {reports.get('syntax', {}).get('symbol_unit_count', 0) or reports.get('normalize', {}).get('unit_count', 0)}
+- Files: {reports.get('normalize', {}).get('file_count', reports.get('curate', {}).get('file_count', 0))}
+- Searchable units: {reports.get('syntax', {}).get('symbol_unit_count', 0) or reports.get('normalize', {}).get('unit_count', reports.get('curate', {}).get('unit_count', 0))}
 
 ## Retrieval
 

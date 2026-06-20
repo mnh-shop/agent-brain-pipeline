@@ -178,13 +178,26 @@ def hermes_config(cfg: dict[str, Any], profile: str) -> dict[str, Any]:
         if enabled_providers.get(provider, {}).get("enabled") and clean_keys(enabled_providers[provider]):
             fallbacks.append({"provider": provider, "model": item.get("model")})
 
-    return {
+    config: dict[str, Any] = {
         "model": {"provider": model["provider"], "default": model["model"]},
         "fallback_providers": fallbacks,
         "credential_pool_strategies": strategies,
         "terminal": {"backend": "local"},
-        "kanban": {"dispatch_in_gateway": True},
+        "kanban": {
+            "dispatch_in_gateway": True,
+            "orchestrator_profile": "orchestrator",
+        },
+        "auxiliary": {
+            "kanban_decomposer": {"provider": model["provider"], "model": model["model"]},
+            "triage_specifier": {"provider": model["provider"], "model": model["model"]},
+        },
     }
+    if profile == "orchestrator":
+        config["platform_toolsets"] = {
+            "cli": ["hermes-cli"],
+            "telegram": ["terminal", "skills", "kanban"],
+        }
+    return config
 
 
 def auth_json(cfg: dict[str, Any]) -> dict[str, Any]:
@@ -215,13 +228,27 @@ def copy_profile_source(repo_root: Path, profile: str, destination: Path) -> Non
     if not source.exists():
         raise FileNotFoundError(f"Missing profile distribution: {source}")
     destination.mkdir(parents=True, exist_ok=True)
-    for name in ("SOUL.md", "skills"):
+    for name in ("SOUL.md", "distribution.yaml", "skills"):
         src = source / name
         dst = destination / name
         if src.is_dir():
-            if dst.exists():
-                shutil.rmtree(dst)
-            shutil.copytree(src, dst)
+            if src.name == "skills":
+                dst.mkdir(parents=True, exist_ok=True)
+                for child in src.iterdir():
+                    child_dst = dst / child.name
+                    if child_dst.exists():
+                        if child_dst.is_dir():
+                            shutil.rmtree(child_dst)
+                        else:
+                            child_dst.unlink()
+                    if child.is_dir():
+                        shutil.copytree(child, child_dst)
+                    else:
+                        shutil.copy2(child, child_dst)
+            else:
+                if dst.exists():
+                    shutil.rmtree(dst)
+                shutil.copytree(src, dst)
         elif src.exists():
             shutil.copy2(src, dst)
 
@@ -237,13 +264,16 @@ def render(cfg: dict[str, Any], repo_root: Path) -> None:
     hermes_root = runtime / "hermes"
     runtime.mkdir(parents=True, exist_ok=True)
     hermes_root.mkdir(parents=True, exist_ok=True)
+    orchestrator_shadow = hermes_root / "profiles" / "orchestrator"
+    if orchestrator_shadow.exists():
+        shutil.rmtree(orchestrator_shadow)
 
     storage = cfg["storage"]
     # The operator edits one central file, but each container receives only the
     # subset it needs. The pipeline never receives Telegram or LLM credentials.
     pipeline_keys = (
         "version", "general", "security", "scm", "stages", "maintenance",
-        "pipeline", "lint", "syntax", "codegraph", "codebase_memory", "embeddings", "lancedb", "storage", "api", "logging", "wiki",
+        "pipeline", "lint", "syntax", "codegraph", "codebase_memory", "embeddings", "lancedb", "storage", "wiki", "api", "logging",
     )
     pipeline_cfg = {key: cfg[key] for key in pipeline_keys if key in cfg}
     pipeline_config_path = runtime / "pipeline.yaml"
@@ -255,27 +285,29 @@ def render(cfg: dict[str, Any], repo_root: Path) -> None:
         "PIPELINE_PORT": str(cfg["api"]["public_host_port"]),
         "PIPELINE_CONFIG_PATH": str(pipeline_config_path.resolve()),
         "DATA_HOST_PATH": str((repo_root / storage["data_host_path"]).resolve()) if not Path(storage["data_host_path"]).is_absolute() else storage["data_host_path"],
+        "HERMES_HOST_PATH": str((repo_root / storage["hermes_host_path"]).resolve()) if not Path(storage["hermes_host_path"]).is_absolute() else storage["hermes_host_path"],
         "OBSIDIAN_HOST_PATH": str((repo_root / storage["obsidian_host_path"]).resolve()) if not Path(storage["obsidian_host_path"]).is_absolute() else storage["obsidian_host_path"],
         "AGENT_BRAIN_API_TOKEN": cfg["security"]["internal_api_token"],
         "HERMES_TIMEZONE": cfg.get("general", {}).get("timezone", "America/Bogota"),
     }
     write_secret(runtime / "compose.env", "\n".join(f"{k}={v}" for k, v in compose_env.items()) + "\n")
 
+    profiles = list(cfg.get("profiles", {}).keys())
     enabled = [name for name, value in cfg["profiles"].items() if value.get("enabled")]
     (runtime / "enabled-profiles.json").write_text(json.dumps(enabled, indent=2) + "\n", encoding="utf-8")
 
     # The root/default Hermes profile is the orchestrator.
     copy_profile_source(repo_root, "orchestrator", hermes_root)
-    write_secret(hermes_root / ".env", "\n".join(env_lines(cfg, "orchestrator", True)) + "\n")
+    write_secret(hermes_root / ".env", "\n".join(env_lines(cfg, "orchestrator", cfg.get("telegram", {}).get("bots", {}).get("orchestrator", {}).get("enabled", False))) + "\n")
     (hermes_root / "config.yaml").write_text(yaml.safe_dump(hermes_config(cfg, "orchestrator"), sort_keys=False), encoding="utf-8")
     write_secret(hermes_root / "auth.json", json.dumps(auth_json(cfg), indent=2) + "\n")
 
-    for profile in enabled:
+    for profile in profiles:
         if profile == "orchestrator":
             continue
         dest = hermes_root / "profiles" / profile
         copy_profile_source(repo_root, profile, dest)
-        write_secret(dest / ".env", "\n".join(env_lines(cfg, profile, profile in cfg.get("telegram", {}).get("bots", {}))) + "\n")
+        write_secret(dest / ".env", "\n".join(env_lines(cfg, profile, False)) + "\n")
         (dest / "config.yaml").write_text(yaml.safe_dump(hermes_config(cfg, profile), sort_keys=False), encoding="utf-8")
         write_secret(dest / "auth.json", json.dumps(auth_json(cfg), indent=2) + "\n")
 

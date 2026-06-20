@@ -182,10 +182,36 @@ def semantic_search(query: str, source_id: str | None = None, limit: int = 10, c
         semantic_report = Path(run["snapshot_path"]).parent / "codebase-memory-report.json"
         legacy_report = Path(run["snapshot_path"]).parent / "semantic-report.json"
         project = str(cfg.get("project_name", "repository"))
+        semantic_supported = True
         if semantic_report.exists():
-            project = str(read_json(semantic_report).get("project") or project)
+            report = read_json(semantic_report)
+            project = str(report.get("project") or project)
+            semantic_supported = bool(
+                report.get("semantic_query_supported")
+                if report.get("semantic_query_supported") is not None
+                else report.get("normalized", {}).get("semantic_query_supported", True)
+            )
         elif legacy_report.exists():
-            project = str(read_json(legacy_report).get("project") or project)
+            report = read_json(legacy_report)
+            project = str(report.get("project") or project)
+            semantic_supported = bool(
+                report.get("semantic_query_supported")
+                if report.get("semantic_query_supported") is not None
+                else report.get("normalized", {}).get("semantic_query_supported", True)
+            )
+        if not semantic_supported:
+            items.append({
+                "method": "semantic",
+                "source_id": run["source_id"],
+                "commit_sha": run["commit_sha"],
+                "returncode": None,
+                "results": [],
+                "error": None,
+                "unsupported": True,
+                "reason": "semantic_query unsupported by installed codebase-memory-mcp",
+                "score": 0,
+            })
+            continue
         payload = {"query": query, "limit": limit, "project": project}
         result = run_command([str(cfg.get("command", "codebase-memory-mcp")), "cli", "semantic_query", json.dumps(payload)], env=env, check=False, timeout=180)
         try:

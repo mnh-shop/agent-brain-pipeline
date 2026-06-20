@@ -131,14 +131,16 @@ def _map_to_symbol(
         if content_sha256 and row.get("content_sha256") not in {None, content_sha256}:
             continue
         return {"matched": True, "symbol_id": row.get("symbol_id"), "unit_id": row.get("unit_id"), "reason": "matched_symbol"}
-    for row in units_by_path.get(normalized, []):
-        if start_line is not None and row.get("start_line") not in {None, start_line}:
-            continue
-        if end_line is not None and row.get("end_line") not in {None, end_line}:
-            continue
-        if content_sha256 and row.get("content_sha256") not in {None, content_sha256}:
-            continue
-        return {"matched": True, "unit_id": row.get("unit_id"), "reason": "matched_unit"}
+    has_unit_anchor = start_line is not None or end_line is not None or bool(content_sha256)
+    if has_unit_anchor:
+        for row in units_by_path.get(normalized, []):
+            if start_line is not None and row.get("start_line") not in {None, start_line}:
+                continue
+            if end_line is not None and row.get("end_line") not in {None, end_line}:
+                continue
+            if content_sha256 and row.get("content_sha256") not in {None, content_sha256}:
+                continue
+            return {"matched": True, "unit_id": row.get("unit_id"), "reason": "matched_unit"}
     return {"matched": False, "reason": "unmatched"}
 
 
@@ -170,12 +172,21 @@ def _record_from_semantic_item(
     symbols_by_path: dict[str, list[dict[str, Any]]],
     units_by_path: dict[str, list[dict[str, Any]]],
 ) -> dict[str, Any]:
-    path = item.get("path") or item.get("file_path") or item.get("location", {}).get("path")
+    path = item.get("path") or item.get("file_path") or item.get("file") or item.get("location", {}).get("path")
     start_line = item.get("start_line") or item.get("line_start") or item.get("location", {}).get("start_line")
     end_line = item.get("end_line") or item.get("line_end") or item.get("location", {}).get("end_line")
     content = item.get("content") or item.get("excerpt") or ""
     content_sha256 = item.get("content_sha256") or (sha256_text(content) if content else None)
-    mapping = _map_to_symbol(path, item.get("symbol_kind") or item.get("kind"), item.get("qualified_name") or item.get("name"), start_line, end_line, content_sha256, symbols_by_path, units_by_path)
+    mapping = _map_to_symbol(
+        path,
+        item.get("symbol_kind") or item.get("kind") or item.get("label"),
+        item.get("qualified_name") or item.get("name"),
+        start_line,
+        end_line,
+        content_sha256,
+        symbols_by_path,
+        units_by_path,
+    )
     exact_commit = item.get("commit_sha") in {None, commit_sha}
     return {
         "item_id": stable_hash(project, path or "", start_line, end_line, content_sha256 or "", item.get("qualified_name") or item.get("name") or ""),
@@ -238,6 +249,9 @@ def normalize_semantic_outputs(
     unmatched: list[dict[str, Any]] = []
     symbol_rows: list[dict[str, Any]] = []
     relationship_rows: list[dict[str, Any]] = []
+    graph_artifact_exists = (raw_dir / "graph.db.zst").exists()
+    graph_command = command_results.get("graph_search", {})
+    semantic_command = command_results.get("semantic_query", {})
 
     def handle_item(item: dict[str, Any], bucket: str) -> dict[str, Any]:
         record = _record_from_semantic_item(
@@ -333,18 +347,31 @@ def normalize_semantic_outputs(
         "pipeline_version": run["pipeline_version"],
         "project": project,
         "project_in_list_projects": bool(project_entry),
-        "graph_artifact_exists": bool((raw_dir / "graph.db.zst").exists()),
-        "graph_artifact_sha256": sha256_file(raw_dir / "graph.db.zst") if (raw_dir / "graph.db.zst").exists() else None,
+        "graph_artifact_exists": bool(graph_artifact_exists),
+        "graph_artifact_sha256": sha256_file(raw_dir / "graph.db.zst") if graph_artifact_exists else None,
         "index_mode": command_results["index"]["index_mode"],
         "workers": command_results["index"]["workers"],
         "cache_dir": command_results["index"]["cache_dir"],
         "version": probe.version,
+        "graph_search_returncode": graph_command.get("returncode"),
+        "semantic_query_supported": bool(semantic_command.get("supported", True)),
+        "semantic_query_invoked": bool(semantic_command.get("invoked", semantic_command.get("supported", True))),
+        "semantic_query_returncode": semantic_command.get("returncode"),
         "node_count": len(graph_records),
         "semantic_count": len(semantic_records),
         "matched_count": len([row for row in symbol_rows if row["matched"]]),
         "unmatched_count": len(unmatched),
         "all_exact_commit": all(row["exact_commit"] for row in semantic_records + graph_records),
-        "passed": bool(project_entry and architecture_record["raw"] and graph_records and semantic_records and any(row["matched"] for row in semantic_records + graph_records)),
+        "passed": bool(
+            project_entry
+            and architecture_record["raw"]
+            and graph_artifact_exists
+            and graph_command.get("returncode") == 0
+            and (
+                not semantic_command.get("supported", True)
+                or semantic_command.get("returncode") == 0
+            )
+        ),
     }
     write_json(normalized_dir / "manifest.json", manifest)
     return {

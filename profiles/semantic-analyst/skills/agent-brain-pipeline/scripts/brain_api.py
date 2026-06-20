@@ -11,6 +11,10 @@ import urllib.parse
 import urllib.request
 from typing import Any
 
+STAGE_ALIASES = {
+    "curate": "normalize",
+}
+
 
 def request(method: str, path: str, payload: dict[str, Any] | None = None) -> Any:
     base = os.environ.get("PIPELINE_API_URL", "http://knowledge-pipeline:8080").rstrip("/")
@@ -56,7 +60,7 @@ def main() -> None:
 
     report = sub.add_parser("report", help="Read a machine-generated stage report")
     report.add_argument("run_id")
-    report.add_argument("stage", choices=["acquire", "curate", "structure", "semantics", "retrieval", "audit"])
+    report.add_argument("stage", choices=["acquire", "curate", "integrity", "normalize", "lint", "syntax", "structure", "semantics", "retrieval", "vector", "audit", "export"])
 
     retry = sub.add_parser("retry", help="Retry a failed run from the beginning")
     retry.add_argument("run_id")
@@ -76,7 +80,7 @@ def main() -> None:
         result = request("GET", f"/runs?limit={max(1, min(args.limit, 200))}")
     elif args.command == "report":
         run_id = urllib.parse.quote(args.run_id, safe="")
-        stage = urllib.parse.quote(args.stage, safe="")
+        stage = urllib.parse.quote(STAGE_ALIASES.get(args.stage, args.stage), safe="")
         result = request("GET", f"/runs/{run_id}/reports/{stage}")
     elif args.command == "retry":
         result = request("POST", f"/runs/{urllib.parse.quote(args.run_id, safe='')}/retry")
